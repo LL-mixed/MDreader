@@ -42,6 +42,7 @@ object MarkdownHtmlBuilder {
         <script src="marked.min.js"></script>
         <script src="highlight.min.js"></script>
         <script src="katex/katex.min.js"></script>
+        <script src="mermaid.min.js"></script>
         </head>
         <body class="$PLACEHOLDER_THEME">
         <article id="content"></article>

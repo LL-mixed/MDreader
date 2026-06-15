@@ -1,6 +1,7 @@
 // MDreader client-side renderer.
 // Reads the markdown source injected by MarkdownHtmlBuilder as window.MD_SOURCE,
-// parses it with marked, renders math via KaTeX, and highlights code with hljs.
+// parses it with marked, renders math via KaTeX, diagrams via Mermaid, and
+// highlights code with highlight.js.
 (function () {
   var root = document.getElementById('content');
   var src = window.MD_SOURCE || '';
@@ -9,6 +10,9 @@
 
   if (window.katex) {
     renderMath(root);
+  }
+  if (window.mermaid) {
+    renderMermaid(root);
   }
   if (window.hljs) {
     document.querySelectorAll('pre code').forEach(function (block) {
@@ -73,5 +77,29 @@
       }
       if (wrote) textNode.parentNode.replaceChild(frag, textNode);
     }
+  }
+
+  // Replaces ```mermaid fenced blocks with rendered SVG diagrams.
+  function renderMermaid(root) {
+    var isDark = /(^|\s)dark(\s|$)/.test(document.body.className);
+    var blocks = root.querySelectorAll('pre code.language-mermaid');
+    if (!blocks.length) return;
+    blocks.forEach(function (code, i) {
+      var pre = code.parentNode;
+      if (!pre || pre.tagName !== 'PRE') return;
+      var div = document.createElement('div');
+      div.className = 'mermaid';
+      div.id = 'mdr-mermaid-' + i;
+      div.textContent = code.textContent;
+      pre.parentNode.replaceChild(div, pre);
+    });
+    try {
+      window.mermaid.init({
+        startOnLoad: false,
+        theme: isDark ? 'dark' : 'default',
+        securityLevel: 'loose',
+        fontFamily: 'inherit'
+      }, root.querySelectorAll('.mermaid'));
+    } catch (e) { /* ignore */ }
   }
 })();

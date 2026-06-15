@@ -36,6 +36,7 @@ class MarkdownHtmlBuilderTest {
         assertTrue(html.contains("render.css"))
         assertTrue(html.contains("katex/katex.min.js"))
         assertTrue(html.contains("katex/katex.min.css"))
+        assertTrue(html.contains("mermaid.min.js"))
         assertTrue(html.contains("render.js"))
     }
 
