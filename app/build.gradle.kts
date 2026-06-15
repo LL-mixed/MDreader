@@ -1,7 +1,17 @@
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.ksp)
+}
+
+// Optional release-signing credentials. Kept out of version control in
+// local.properties (gitignored). When absent, release builds are unsigned.
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -21,6 +31,17 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            localProperties.getProperty("mdreader.storeFile")?.let { path ->
+                storeFile = File(path)
+                storePassword = localProperties.getProperty("mdreader.storePassword")
+                keyAlias = localProperties.getProperty("mdreader.keyAlias")
+                keyPassword = localProperties.getProperty("mdreader.keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
@@ -29,8 +50,12 @@ android {
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
+            val releaseSigning = signingConfigs.getByName("release")
+            if (releaseSigning.storeFile != null) {
+                signingConfig = releaseSigning
+            }
         }
     }
 
