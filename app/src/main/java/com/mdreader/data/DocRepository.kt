@@ -40,6 +40,13 @@ class DocRepository(
         return entity.copy(id = id)
     }
 
+    /** Opens a cached document: refreshes [openedAt] and returns title + content. */
+    suspend fun openDocument(id: Long): Pair<CachedDocEntity, String>? {
+        val entity = dao.getById(id) ?: return null
+        dao.touchOpenedAt(id, now())
+        return entity to (DocStore.read(appContext, id) ?: "")
+    }
+
     fun observeAll(): Flow<List<CachedDocEntity>> = dao.observeAll()
 
     fun search(query: String): Flow<List<CachedDocEntity>> = dao.search(query)

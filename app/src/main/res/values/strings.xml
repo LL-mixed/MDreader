@@ -1,3 +1,29 @@
 <resources>
     <string name="app_name">MDreader</string>
+
+    <!-- Library -->
+    <string name="library_title">文档</string>
+    <string name="search_placeholder">搜索标题</string>
+    <string name="empty_title">还没有缓存的文档</string>
+    <string name="empty_hint">从微信、文件管理器等用本应用打开 Markdown 文件，会自动缓存到这里。</string>
+    <string name="open_sample">查看内置示例</string>
+    <string name="search_no_result">没有匹配的文档</string>
+
+    <!-- Item actions -->
+    <string name="action_favorite">收藏</string>
+    <string name="action_unfavorite">取消收藏</string>
+    <string name="action_delete">删除</string>
+    <string name="delete_confirm_title">删除文档</string>
+    <string name="delete_confirm_message">确定删除「%1$s」？此操作不可撤销。</string>
+    <string name="action_confirm">确定</string>
+    <string name="action_cancel">取消</string>
+
+    <!-- Day buckets -->
+    <string name="bucket_today">今天</string>
+    <string name="bucket_yesterday">昨天</string>
+    <string name="bucket_earlier">更早</string>
+
+    <!-- Reader -->
+    <string name="back">返回</string>
+    <string name="loading">加载中…</string>
 </resources>
