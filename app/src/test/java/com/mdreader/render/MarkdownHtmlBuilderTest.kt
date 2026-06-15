@@ -34,12 +34,23 @@ class MarkdownHtmlBuilderTest {
         assertTrue(html.contains("marked.min.js"))
         assertTrue(html.contains("highlight.min.js"))
         assertTrue(html.contains("render.css"))
+        assertTrue(html.contains("katex/katex.min.js"))
+        assertTrue(html.contains("katex/katex.min.css"))
+        assertTrue(html.contains("render.js"))
+    }
+
+    @Test
+    fun embedsSourceAndLoadsRenderer() {
+        val html = MarkdownHtmlBuilder.build("hello math", RenderTheme.LIGHT)
+        assertTrue(html.contains("window.MD_SOURCE ="))
+        assertTrue(html.contains("\"hello math\""))
+        assertTrue(html.contains("render.js"))
     }
 
     @Test
     fun markdownIsEmbeddedAsJsonString() {
         val html = MarkdownHtmlBuilder.build("hello world", RenderTheme.LIGHT)
-        assertTrue(html.contains("var src = "))
+        assertTrue(html.contains("window.MD_SOURCE ="))
         assertTrue(html.contains("hello world"))
     }
 

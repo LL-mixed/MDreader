@@ -18,12 +18,13 @@ enum class RenderTheme(val bodyClass: String) {
 
 /**
  * Builds a self-contained HTML document that renders Markdown through the
- * vendored WebView assets (marked.js + highlight.js + render.css).
+ * vendored WebView assets. The markdown payload is embedded as a JSON string
+ * literal assigned to `window.MD_SOURCE`; assets/render/render.js then parses
+ * it with marked.js, renders $...$/$$...$$ math with KaTeX, and highlights code
+ * with highlight.js.
  *
  * Pure and side-effect free, so it can be unit-tested on the JVM without a
- * WebView. The markdown payload is embedded as a JSON string literal that is
- * safe inside a <script> block. marked defaults to GFM on / breaks off, which
- * is exactly the rendering we want, so no extra options are required.
+ * WebView. The payload is JSON-escaped so it is safe inside a <script> block.
  */
 object MarkdownHtmlBuilder {
 
@@ -37,23 +38,15 @@ object MarkdownHtmlBuilder {
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
         <link rel="stylesheet" href="render.css">
+        <link rel="stylesheet" href="katex/katex.min.css">
         <script src="marked.min.js"></script>
         <script src="highlight.min.js"></script>
+        <script src="katex/katex.min.js"></script>
         </head>
         <body class="$PLACEHOLDER_THEME">
         <article id="content"></article>
-        <script>
-        (function () {
-          var src = $PLACEHOLDER_SOURCE;
-          var html = window.marked ? window.marked.parse(src) : ("<pre>" + src + "</pre>");
-          document.getElementById('content').innerHTML = html;
-          if (window.hljs) {
-            document.querySelectorAll('pre code').forEach(function (block) {
-              try { window.hljs.highlightElement(block); } catch (e) { /* ignore */ }
-            });
-          }
-        })();
-        </script>
+        <script>window.MD_SOURCE = $PLACEHOLDER_SOURCE;</script>
+        <script src="render.js"></script>
         </body>
         </html>
     """.trimIndent()
