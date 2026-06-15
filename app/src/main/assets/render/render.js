@@ -1,24 +1,31 @@
 // MDreader client-side renderer.
-// Reads the markdown source injected by MarkdownHtmlBuilder as window.MD_SOURCE,
-// parses it with marked, renders math via KaTeX, diagrams via Mermaid, and
-// highlights code with highlight.js.
+// The page (assets/render/index.html) is loaded with WebView.loadUrl, so this
+// script and its sibling assets are all same-origin and load reliably. The
+// markdown source and theme are provided at runtime by the Kotlin bridge
+// window.mdreaderNative (see MarkdownView).
 (function () {
-  var root = document.getElementById('content');
-  var src = window.MD_SOURCE || '';
-  var html = window.marked ? window.marked.parse(src) : '<pre>' + src + '</pre>';
-  root.innerHTML = html;
+  function render() {
+    var native = window.mdreaderNative;
+    var src = native ? native.getMarkdown() : '';
+    var dark = native ? native.getDark() : false;
+    document.body.className = dark ? 'dark' : 'light';
 
-  if (window.katex) {
-    renderMath(root);
+    var root = document.getElementById('content');
+    var html = window.marked ? window.marked.parse(src) : '<pre>' + src + '</pre>';
+    root.innerHTML = html;
+
+    if (window.katex) { renderMath(root); }
+    if (window.mermaid) { renderMermaid(root); }
+    if (window.hljs) {
+      document.querySelectorAll('pre code').forEach(function (block) {
+        try { window.hljs.highlightElement(block); } catch (e) { /* ignore */ }
+      });
+    }
+    if (native) { native.markRendered(); }
   }
-  if (window.mermaid) {
-    renderMermaid(root);
-  }
-  if (window.hljs) {
-    document.querySelectorAll('pre code').forEach(function (block) {
-      try { window.hljs.highlightElement(block); } catch (e) { /* ignore */ }
-    });
-  }
+
+  window.MDreader = { render: render };
+  document.addEventListener('DOMContentLoaded', render);
 
   // Walks text nodes under [node] and renders $...$ (inline) and $$...$$ (display) math.
   function renderMath(node) {
@@ -48,7 +55,6 @@
         var bestIdx = -1, bestD = -1;
         for (var d = 0; d < delims.length; d++) {
           var idx = rest.indexOf(delims[d].left);
-          // Prefer $$ over $ when both start at the same index (delims[0] is $$).
           if (idx >= 0 && (bestIdx === -1 || idx < bestIdx)) { bestIdx = idx; bestD = d; }
         }
         if (bestIdx === -1) { frag.appendChild(document.createTextNode(rest)); break; }
@@ -56,7 +62,6 @@
         var contentStart = bestIdx + dl.left.length;
         var endIdx = rest.indexOf(dl.right, contentStart);
         if (endIdx === -1) {
-          // No closing delimiter: emit up to the opener literally and keep scanning.
           frag.appendChild(document.createTextNode(rest.slice(0, contentStart)));
           rest = rest.slice(contentStart);
           continue;
@@ -79,7 +84,7 @@
     }
   }
 
-  // Replaces ```mermaid fenced blocks with rendered SVG diagrams.
+  // Replaces fenced mermaid blocks with rendered SVG diagrams.
   function renderMermaid(root) {
     var isDark = /(^|\s)dark(\s|$)/.test(document.body.className);
     var blocks = root.querySelectorAll('pre code.language-mermaid');
