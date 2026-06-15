@@ -75,6 +75,15 @@ flowchart LR
     D --> C
 ```
 
+## SVG 与图片
+
+内联 SVG（由 WebView 原生渲染）：
+
+<svg width="180" height="46" viewBox="0 0 180 46" xmlns="http://www.w3.org/2000/svg">
+  <rect width="180" height="46" rx="11" fill="#2563eb" />
+  <text x="90" y="29" font-family="sans-serif" font-size="18" font-weight="bold" fill="#ffffff" text-anchor="middle">MD reader</text>
+</svg>
+
 ## 其它
 
 水平线：
