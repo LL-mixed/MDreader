@@ -17,42 +17,45 @@
 
 ## 数据与跳转来源（关键决策）
 
-大纲展示数据与跳转定位分别用最合适的来源，并用数量校验保证一致：
+**大纲数据（索引 + 层级 + 文本）与跳转定位均以渲染后的 DOM 为唯一权威来源。**
 
 | 用途 | 来源 | 理由 |
 | --- | --- | --- |
-| 展示文本 + 层级 + 顺序索引 | Kotlin 纯函数 `OutlineParser` 解析 markdown | 纯逻辑，可 JVM 单元测试，且不依赖渲染时机 |
-| 跳转滚动定位 | DOM（JS） | 以最终渲染结果为准，定位最准 |
-| 一致性兜底 | JS 回传 DOM 标题数量，Kotlin 取 `min(解析数, DOM数)` | 防御 marked 边缘规则导致索引错位 |
+| 大纲数据（index + level + text）+ 跳转定位 | DOM（JS），唯一权威 | 与最终渲染结果天然一致，索引零错位 |
 
-解析规则：支持 ATX（`#`~`######`）与 Setext（`===`→h1，`---`→h2），跳过围栏代码块（``` / ~~~）与缩进代码块（4 空格）；清理标题文本（去 `#` 尾缀、去强调/代码标记，保留纯文本）。
+`render.js` 在 `marked.parse` 后遍历 `#content` 下的 `h1~h6`，按出现顺序分配 `id="mdr-h-{index}"`，并一次性把 `[{ index, level, text }]` 回传给 Kotlin（`textContent` 取纯文本）。点击大纲项 → 调 `window.MDreader.scrollToHeading(index)` → `getElementById('mdr-h-'+index).scrollIntoView()`。数据与跳转共用同一套 DOM 索引，永不错位。
+
+**为何不用 Kotlin 解析 markdown 标题（原方案）**：跳转要求大纲索引与 DOM 标题序列严格一一对齐。若 Kotlin 只解析 ATX，遇到 Setext 标题（`===`/`---`）或 HTML `<h2>` 标题就会与 marked 输出的 DOM 序列错位；`min()` 兜底只能截断数量、不能重排，会导致「点 A 跳到 B」。在 Kotlin 精确复刻 marked 的段落/标题解析成本高，且会与 marked 版本脱节（违反 DRY），故改由 DOM 为唯一权威。
+
+**代价**：标题提取属渲染行为，归入手动验证清单（CLAUDE.md 允许渲染/UI 行为走此路径），无 JVM 单测。
 
 ## 组件拆分
 
-- `util/OutlineParser.kt`（新）：`parse(markdown): List<OutlineItem>`；`OutlineItem(index, level, text)`。纯逻辑。
+- `data class OutlineItem(val index: Int, val level: Int, val text: String)`（新，放 `render` 包）：大纲项模型。
 - `render.js`：
-  - `render()` 末尾：收集 `h1~h6` → 按顺序分配 `id="mdr-h-{index}"` → 通过 `mdreaderNative.onOutlineReady(count)` 回传数量。
-  - 新增 `scrollToHeading(index)`：`document.getElementById('mdr-h-'+index).scrollIntoView()`。
-  - 新增 IntersectionObserver：回传当前可见标题索引 `onActiveHeading(index)`。
+  - `render()` 末尾：`indexHeadings()` 遍历 `#content` 下 `h1~h6`，按顺序分配 `id="mdr-h-{index}"`，组装 `[{index, level, text}]`（`textContent`）→ 经 `mdreaderNative.onOutline(json)` 一次性回传。
+  - 新增 `scrollToHeading(index)`：`getElementById('mdr-h-'+index).scrollIntoView({block:'start'})`。
+  - 新增 IntersectionObserver：只回传变化的当前可见标题索引（记录 `lastActive` 去抖），`mdreaderNative.onActiveHeading(index)`。
   - 全部暴露到 `window.MDreader`。
 - `render/MarkdownView.kt`：
-  - `SourceBridge` 新增 `@JavascriptInterface onOutlineReady(count)` / `onActiveHeading(index)`，转发到 Kotlin 回调。
-  - `MarkdownView` 新增参数 `onOutline: (Int) -> Unit`、`onActiveHeading: (Int) -> Unit`；提供内部跳转：`evaluateJavascript("window.MDreader.scrollToHeading(i)", null)`。
-- `ui/OutlineDrawer.kt`（新）：渲染大纲树，接收 `List<OutlineItem>` + `activeIndex` + `onClick`。
-- `ui/ReaderScreen.kt`：用 `OutlineParser` 解析标题；`Box` 内按窗口宽度分流 `ModalNavigationDrawer` / `PermanentNavigationDrawer`；TopAppBar 加目录图标与 `rememberDrawerState`；状态：大纲项列表、DOM 标题数（用于截断）、`activeIndex`。
+  - `SourceBridge` 新增 `@JavascriptInterface onOutline(json)` / `onActiveHeading(index)`；回调通过主线程 `Handler` 转发（JS 线程非主线程）。
+  - `MarkdownView` 新增参数 `onOutline: (List<OutlineItem>) -> Unit`、`onActiveHeading: (Int) -> Unit`；并暴露跳转：返回一个 `remember` 的 `OutlineController`（弱持 `WebView`），`controller.scrollToHeading(i)` 内部 `evaluateJavascript("window.MDreader.scrollToHeading(i)", null)`。
+- `ui/OutlineDrawer.kt`（新）：渲染大纲树（`level` 缩进、`maxLines=2`+省略号、`activeIndex` 项高亮、点击回调）。
+- `ui/ReaderScreen.kt`：`Box` 内按 `screenWidthDp` 分流 `ModalNavigationDrawer`（右侧）/ `PermanentNavigationDrawer`（常驻）；TopAppBar 加目录图标 + `rememberDrawerState`；状态：`outline: List<OutlineItem>`、`activeIndex: Int?`、`OutlineController`。无标题时隐藏目录图标并展示空提示。
 
 ## 测试策略
 
-- **JVM 单元测试（`app/src/test`）**：
-  - `OutlineParserTest`：ATX 各级、Setext、跨级、空标题、纯符号、带强调/代码文本清理、围栏代码块（``` 与 ~~~）跳过、缩进代码块跳过、嵌套列表内标题不算、文本与层级与顺序一致性。
+大纲数据来自 DOM（渲染行为），无 JVM 单测，走详细手动验证清单：
+
 - **手动验证清单（adb 装包后）**：
   1. 竖屏打开 `sample.md`，点目录图标 → 右侧抽屉滑出，标题按层级缩进显示。
   2. 点击某大纲项 → 抽屉关闭、正文滚动到对应标题。
   3. 手动上下滚动正文 → 大纲高亮项随之变化。
   4. 旋转横屏 → 大纲常驻左侧，点击即时跳转。
-  5. 打开一个无标题的文档 → 目录图标可隐藏或抽屉为空提示。
+  5. 打开一个无标题的文档 → 目录图标隐藏（或抽屉为空提示）。
   6. 打开含代码块内 `#` 开头行的文档 → 代码块内的「标题」不出现在大纲。
-- **构建校验**：每次改动 `./gradlew assembleDebug` 与 `:app:testDebugUnitTest` 全绿。
+  7. Setext 标题（`===`/`---`）与 HTML `<h2>` 标题也出现在大纲，且点击跳转正确（验证索引对齐）。
+- **构建校验**：每次改动 `./gradlew assembleDebug` 与 `:app:testDebugUnitTest` 全绿（确保新代码不破坏既有纯逻辑测试）。
 
 ## 响应式实现
 
@@ -61,9 +64,8 @@
 
 ## 实现顺序（里程碑）
 
-1. `OutlineParser` + 单测（纯逻辑先行，TDD）。
-2. `render.js` 标题 id 分配 + `scrollToHeading` + `IntersectionObserver`。
-3. `MarkdownView` 双向桥（回传 + 跳转）。
-4. `OutlineDrawer` + `ReaderScreen` 竖屏抽屉。
-5. 横屏常驻 + 当前项高亮。
-6. 验证清单全过 + `assembleDebug`/单测全绿 + 提交。
+1. `OutlineItem` 模型 + `render.js` 标题 id 分配 + outline 回传 + `scrollToHeading` + IntersectionObserver。
+2. `MarkdownView` 双向桥（`onOutline`/`onActiveHeading` 回传 + `OutlineController` 跳转）。
+3. `OutlineDrawer` Composable。
+4. `ReaderScreen` 竖屏抽屉 + 横屏常驻 + 当前项高亮。
+5. 验证清单全过 + `assembleDebug`/单测全绿 + 提交。
