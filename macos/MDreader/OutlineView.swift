@@ -21,7 +21,7 @@ struct OutlineView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(model.outline) { item in
-                        OutlineRow(item: item, isActive: item.index == model.activeHeadingIndex)
+                        OutlineRow(item: item, isActive: item.index == model.activeHeadingIndex, zoom: model.zoom)
                             .contentShape(Rectangle())
                             .onTapGesture { model.jumpToHeading(item.index) }
                     }
@@ -35,6 +35,7 @@ struct OutlineView: View {
 struct OutlineRow: View {
     let item: OutlineItem
     let isActive: Bool
+    var zoom: Double = 1.0
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,7 +47,7 @@ struct OutlineRow: View {
                 Color.clear.frame(width: 2)
             }
             Text(item.text)
-                .font(.body)
+                .font(.system(size: 13 * zoom))
                 .fontWeight(isActive ? .semibold : .regular)
                 .foregroundStyle(isActive ? Color.primary : Color.secondary)
                 .lineLimit(2)

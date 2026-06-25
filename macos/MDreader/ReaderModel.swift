@@ -18,6 +18,7 @@ final class ReaderModel: ObservableObject {
     @Published var outline: [OutlineItem] = []
     @Published var activeHeadingIndex: Int? = nil
     @Published var scrollRequest: Int? = nil
+    @Published var zoom: Double = 1.0
     var repository: DocRepository?
 
     init(repository: DocRepository? = nil) {
@@ -76,6 +77,10 @@ final class ReaderModel: ObservableObject {
     func jumpToHeading(_ index: Int) {
         scrollRequest = index
     }
+
+    func zoomIn() { zoom = min(zoom * 1.1, 3.0) }
+    func zoomOut() { zoom = max(zoom / 1.1, 0.3) }
+    func resetZoom() { zoom = 1.0 }
 
     private func resetOutline() {
         outline = []

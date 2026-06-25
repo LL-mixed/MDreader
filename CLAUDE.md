@@ -115,6 +115,8 @@ xcodebuild -project MDreader.xcodeproj -scheme MDreader -destination 'platform=m
 
 **大纲（Outline）**：sidebar 顶部「库/大纲」切换；大纲数据来自 render.js 的 DOM 标题（`indexHeadings`/`onActiveHeading`/`scrollToHeading`，与 Android 共享零改动），点击跳转 + 滚动高亮当前标题（对应 Android `OutlineDrawer`）。
 
+**缩放（Zoom）**：工具栏 −/百分比/+/重置 + 快捷键 ⌘+/⌘−/⌘0；WKWebView `pageZoom` 缩放正文，outline 字体同步缩放（30%–300%）。
+
 ## 编码约定
 
 - 不使用 shell 脚本改动代码；单次少量修改。

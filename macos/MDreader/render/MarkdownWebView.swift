@@ -5,6 +5,7 @@ import WebKit
 struct MarkdownWebView: NSViewRepresentable {
     let markdown: String
     let isDark: Bool
+    var zoom: Double = 1.0
     var scrollRequest: Int? = nil
     var onDropText: ((String, String) -> Void)? = nil
     var onOutline: (([OutlineItem]) -> Void)? = nil
@@ -47,6 +48,10 @@ struct MarkdownWebView: NSViewRepresentable {
         coord.onDropText = onDropText
         coord.onOutline = onOutline
         coord.onActiveHeading = onActiveHeading
+
+        if webView.pageZoom != zoom {
+            webView.pageZoom = zoom
+        }
 
         if let req = scrollRequest, req != coord.lastScrollRequest {
             coord.lastScrollRequest = req

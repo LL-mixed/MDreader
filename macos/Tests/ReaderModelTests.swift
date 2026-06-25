@@ -22,4 +22,25 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.markdown, body)
         XCTAssertEqual(model.title, "note")
     }
+
+    func testZoomInCapsAtMax() {
+        let model = ReaderModel()
+        model.zoom = 2.9
+        model.zoomIn()
+        XCTAssertEqual(model.zoom, 3.0, accuracy: 0.001)
+    }
+
+    func testZoomOutFloorsAtMin() {
+        let model = ReaderModel()
+        model.zoom = 0.32
+        model.zoomOut()
+        XCTAssertEqual(model.zoom, 0.3, accuracy: 0.001)
+    }
+
+    func testResetZoom() {
+        let model = ReaderModel()
+        model.zoom = 2.0
+        model.resetZoom()
+        XCTAssertEqual(model.zoom, 1.0)
+    }
 }
