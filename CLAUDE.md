@@ -109,7 +109,7 @@ xcodebuild -project MDreader.xcodeproj -scheme MDreader -destination 'platform=m
 1. **MM1 脚手架**：xcodegen 工程、空 SwiftUI 窗口、`xcodegen generate && xcodebuild build` 出 `.app`。✅
 2. **MM2 渲染内核**：WKWebView 加载 `shared/render`，渲染内置样例 md，明暗主题。✅（Swift 版 SvgGuard / MermaidFenceNormalizer + XCTest 已对齐 Android 行为）
 3. **MM3 文件打开者**：Info.plist 注册 `.md` UTI，Finder「打开方式」、拖拽打开。✅（`CFBundleDocumentTypes` + `UTImportedTypeDeclarations` 声明 `com.mdreader.markdown`；`.onOpenURL` 处理 Finder/双击打开、`.onDrop` 处理拖拽；`ReaderModel` 文件读取有单测）
-4. **MM4 缓存层**：SwiftData/CoreData 元数据 + App Support 正文 + SHA-256 去重（对应 Android ContentHash/DocRepository）。
+4. **MM4 缓存层**：SwiftData/CoreData 元数据 + App Support 正文 + SHA-256 去重（对应 Android ContentHash/DocRepository）。✅（SwiftData `@Model CachedDoc` + `DocStore` + `DocRepository`；`deploymentTarget` 提到 macOS 14；打开/拖拽即缓存落盘）
 5. **MM5 内容管理**：Sidebar 列表（按日期分组）、搜索、详情、删除、收藏（对应 Android DateBuckets/Titles/Library）。
 6. **MM6 图标与发布**：应用图标、名称、Release `.app` / DMG。
 

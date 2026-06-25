@@ -2,7 +2,7 @@ name: MDreader
 options:
   bundleIdPrefix: com.mdreader
   deploymentTarget:
-    macOS: "13.0"
+    macOS: "14.0"
   developmentLanguage: zh-Hans
 settings:
   base:
@@ -15,7 +15,7 @@ targets:
   MDreader:
     type: application
     platform: macOS
-    deploymentTarget: "13.0"
+    deploymentTarget: "14.0"
     sources:
       - path: MDreader
       - path: ../shared
@@ -53,7 +53,7 @@ targets:
   MDreaderTests:
     type: bundle.unit-test
     platform: macOS
-    deploymentTarget: "13.0"
+    deploymentTarget: "14.0"
     sources:
       - path: Tests
     dependencies:
