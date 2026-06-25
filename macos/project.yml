@@ -1,0 +1,36 @@
+name: MDreader
+options:
+  bundleIdPrefix: com.mdreader
+  deploymentTarget:
+    macOS: "13.0"
+  developmentLanguage: zh-Hans
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    GENERATE_INFOPLIST_FILE: YES
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "-"
+targets:
+  MDreader:
+    type: application
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: MDreader
+      - path: ../shared
+        type: folder
+        name: shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mdreader.macos
+        PRODUCT_NAME: MDreader
+  MDreaderTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "13.0"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: MDreader
