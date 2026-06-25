@@ -3,8 +3,9 @@ import SwiftData
 
 @main
 struct MDreaderApp: App {
-    @StateObject private var model: ReaderModel
     @StateObject private var settingsStore: SettingsStore
+    let repository: DocRepository
+    let zoomStore: ZoomStore
 
     init() {
         let container: ModelContainer
@@ -13,23 +14,18 @@ struct MDreaderApp: App {
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
-        let repo = DocRepository(container: container)
         let settings = SettingsStore()
-        let zoomStore = ZoomStore()
-        let readerModel = ReaderModel(repository: repo)
-        readerModel.zoomStore = zoomStore
-        readerModel.settings = settings
-        _model = StateObject(wrappedValue: readerModel)
+        repository = DocRepository(container: container)
+        zoomStore = ZoomStore()
         _settingsStore = StateObject(wrappedValue: settings)
     }
 
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-                .environmentObject(model)
+        WindowGroup(for: UUID.self) { $docID in
+            ContentView(initialDocID: docID)
                 .environmentObject(settingsStore)
-                .onOpenURL { url in model.open(url) }
-                .onAppear { model.refreshDocs() }
+                .environment(\.mdRepository, repository)
+                .environment(\.mdZoomStore, zoomStore)
         }
         .defaultSize(width: 1000, height: 640)
         .commands {
@@ -39,7 +35,6 @@ struct MDreaderApp: App {
                 }
             }
         }
-
         Settings {
             SettingsView()
                 .environmentObject(settingsStore)

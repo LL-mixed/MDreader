@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibraryView: View {
     @EnvironmentObject private var model: ReaderModel
+    @Environment(\.openWindow) private var openWindow
 
     private var grouped: [(DayBucket, [DocInfo])] {
         let now = Date()
@@ -79,6 +80,11 @@ struct LibraryView: View {
 
     @ViewBuilder
     private func contextMenuItems(for doc: DocInfo) -> some View {
+        Button {
+            openWindow(value: doc.id)
+        } label: {
+            Text("在新 tab 中打开")
+        }
         Button {
             model.toggleFavorite(id: doc.id)
         } label: {

@@ -1,7 +1,12 @@
 import SwiftUI
+import AppKit
 
 struct ContentView: View {
-    @EnvironmentObject private var model: ReaderModel
+    let initialDocID: UUID?
+    @Environment(\.mdRepository) private var repository
+    @Environment(\.mdZoomStore) private var zoomStore
+    @EnvironmentObject private var settingsStore: SettingsStore
+    @StateObject private var model = ReaderModel()
 
     var body: some View {
         NavigationSplitView {
@@ -42,7 +47,6 @@ struct ContentView: View {
                     Button { model.exportPDF() } label: {
                         Label("导出 PDF", systemImage: "square.and.arrow.down")
                     }
-
                     Button { model.editCurrent() } label: {
                         Label("编辑", systemImage: "pencil")
                     }
@@ -55,6 +59,25 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+        .environmentObject(model)
+        .onAppear {
+            model.repository = repository
+            model.zoomStore = zoomStore
+            model.settings = settingsStore
+            model.refreshDocs()
+            if let id = initialDocID, let doc = model.docs.first(where: { $0.id == id }) {
+                model.openCached(doc)
+            }
+            configureTabbing()
+        }
+        .onOpenURL { url in model.open(url) }
+    }
+
+    private func configureTabbing() {
+        for window in NSApp.windows {
+            window.tabbingMode = .preferred
+            window.tabbingIdentifier = "com.mdreader.main"
         }
     }
 }
