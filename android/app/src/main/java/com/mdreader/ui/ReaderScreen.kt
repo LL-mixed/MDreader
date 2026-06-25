@@ -125,6 +125,7 @@ fun ReaderScreen(
                 )
             },
             drawerState = drawerState,
+            gesturesEnabled = false,
             modifier = modifier,
         ) {
             ReaderContent(
