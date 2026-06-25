@@ -219,3 +219,8 @@ body.dark .hljs-regexp { color: #a5d6ff; }
 body.dark .hljs-deletion { color: #ffdcd7; background: #67060c; }
 body.dark .hljs-addition { color: #aff5b4; background: #033a16; }
 body.dark .hljs-meta { color: #8b949e; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; -webkit-appearance: none; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(128,128,128,0.35); border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(128,128,128,0.65); }

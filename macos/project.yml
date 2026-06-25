@@ -50,6 +50,13 @@ targets:
         PRODUCT_NAME: MDreader
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: NO
+    preBuildScripts:
+      - name: Generate build info
+        script: |
+          HASH=$(git -C "$SRCROOT/.." rev-parse --short HEAD 2>/dev/null || echo unknown)
+          AUTHOR=$(git -C "$SRCROOT/.." config user.name 2>/dev/null || echo MDreader)
+          BTIME=$(date "+%Y-%m-%d %H:%M:%S %Z")
+          printf '{"gitHash":"%s","buildTime":"%s","author":"%s"}' "$HASH" "$BTIME" "$AUTHOR" > "$SRCROOT/MDreader/build-info.json"
   MDreaderTests:
     type: bundle.unit-test
     platform: macOS

@@ -22,5 +22,6 @@ macos/**/*.xcodeproj
 macos/**/*.xcworkspace
 macos/build/
 macos/MDreader/Info.plist
+macos/MDreader/build-info.json
 **/xcuserdata/
 **/DerivedData/
