@@ -1,10 +1,6 @@
 import Foundation
 
 final class ReaderModel: ObservableObject {
-    @Published var markdown: String = ""
-    @Published var isDark: Bool = false
-    @Published var title: String = "MDreader"
-
     static let sampleMarkdown: String = {
         guard let url = Bundle.main.url(forResource: "sample", withExtension: "md", subdirectory: "shared"),
               let text = try? String(contentsOf: url, encoding: .utf8) else {
@@ -13,6 +9,10 @@ final class ReaderModel: ObservableObject {
         return text
     }()
 
+    @Published var markdown: String = ReaderModel.sampleMarkdown
+    @Published var isDark: Bool = false
+    @Published var title: String = "MDreader"
+
     func loadSample() {
         markdown = Self.sampleMarkdown
         title = "MDreader"
@@ -20,7 +20,11 @@ final class ReaderModel: ObservableObject {
 
     func open(_ url: URL) {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        openText(text, named: url.lastPathComponent)
+    }
+
+    func openText(_ text: String, named: String) {
         markdown = text
-        title = url.deletingPathExtension().lastPathComponent
+        title = (named as NSString).deletingPathExtension
     }
 }

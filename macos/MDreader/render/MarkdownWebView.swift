@@ -1,9 +1,11 @@
 import SwiftUI
+import AppKit
 import WebKit
 
 struct MarkdownWebView: NSViewRepresentable {
     let markdown: String
     let isDark: Bool
+    var onDropText: ((String, String) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(markdown: markdown, isDark: isDark)
@@ -18,8 +20,14 @@ struct MarkdownWebView: NSViewRepresentable {
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
+        ucc.addUserScript(WKUserScript(
+            source: Self.dropScript(),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
         let webView = WKWebView(frame: .zero, configuration: config)
         context.coordinator.webView = webView
+        context.coordinator.onDropText = onDropText
 
         let renderDir = Bundle.main.resourceURL!.appendingPathComponent("shared/render")
         let indexURL = renderDir.appendingPathComponent("index.html")
@@ -39,6 +47,24 @@ struct MarkdownWebView: NSViewRepresentable {
         webView.evaluateJavaScript(js)
     }
 
+    static func dropScript() -> String {
+        """
+        (function(){
+          document.addEventListener('dragover', function(e){ e.preventDefault(); });
+          document.addEventListener('drop', function(e){
+            e.preventDefault();
+            var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+            if (!f) return;
+            var reader = new FileReader();
+            reader.onload = function(){
+              window.webkit.messageHandlers.mdreaderNative.postMessage({event:'dropFile', name:f.name, text:reader.result});
+            };
+            reader.readAsText(f);
+          });
+        })();
+        """
+    }
+
     final class Coordinator: NSObject, WKScriptMessageHandler {
         weak var webView: WKWebView?
         var markdown: String
@@ -46,6 +72,7 @@ struct MarkdownWebView: NSViewRepresentable {
         var hasRendered = false
         var lastMarkdown: String
         var lastDark: Bool
+        var onDropText: ((String, String) -> Void)?
 
         init(markdown: String, isDark: Bool) {
             self.markdown = markdown
@@ -87,8 +114,16 @@ struct MarkdownWebView: NSViewRepresentable {
         func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
             guard let body = message.body as? [String: Any],
                   let event = body["event"] as? String else { return }
-            if event == "markRendered" {
+            switch event {
+            case "markRendered":
                 hasRendered = true
+            case "dropFile":
+                if let text = body["text"] as? String {
+                    let name = body["name"] as? String ?? "Untitled"
+                    onDropText?(text, name)
+                }
+            default:
+                break
             }
         }
     }

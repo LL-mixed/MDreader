@@ -1,11 +1,10 @@
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct ContentView: View {
     @EnvironmentObject private var model: ReaderModel
 
     var body: some View {
-        MarkdownWebView(markdown: model.markdown, isDark: model.isDark)
+        MarkdownWebView(markdown: model.markdown, isDark: model.isDark, onDropText: { model.openText($0, named: $1) })
             .navigationTitle(model.title)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -16,23 +15,5 @@ struct ContentView: View {
                     }
                 }
             }
-            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                handleDrop(providers)
-                return true
-            }
-    }
-
-    private func handleDrop(_ providers: [NSItemProvider]) {
-        guard let provider = providers.first else { return }
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            var url: URL?
-            if let data = item as? Data {
-                url = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let str = item as? String {
-                url = URL(string: str)
-            }
-            guard let resolved = url else { return }
-            DispatchQueue.main.async { model.open(resolved) }
-        }
     }
 }
