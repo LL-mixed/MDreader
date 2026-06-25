@@ -1,12 +1,16 @@
 package com.mdreader.render
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 
@@ -18,13 +22,22 @@ import androidx.compose.ui.viewinterop.AndroidView
  * Backing properties are named distinctly from the @JavascriptInterface methods
  * to avoid a JVM signature clash between the property getters and the methods.
  */
-private class SourceBridge(initialMarkdown: String, initialDark: Boolean) {
+private class SourceBridge(
+    initialMarkdown: String,
+    initialDark: Boolean,
+    initialSvgs: List<String>,
+) {
     @Volatile var markdownSource: String = initialMarkdown
     @Volatile var darkMode: Boolean = initialDark
+    @Volatile var svgs: List<String> = initialSvgs
     @Volatile var renderedOnce: Boolean = false
 
     @JavascriptInterface fun getMarkdown(): String = markdownSource
     @JavascriptInterface fun getDark(): Boolean = darkMode
+
+    /** Returns the [index]-th guarded SVG; render.js re-injects it after marked.parse. */
+    @JavascriptInterface fun getSvg(index: Int): String = svgs.getOrElse(index) { "" }
+
     @JavascriptInterface fun markRendered() { renderedOnce = true }
 }
 
@@ -44,10 +57,20 @@ fun MarkdownView(
     isDark: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    // Normalize non-standard Mermaid fences (```sequence, ```gantt, aliases,
+    // and untagged keyword blocks) to the ```mermaid tag the renderer handles.
+    // Pure logic — see MermaidFenceNormalizer and its JVM tests.
+    val normalized = remember(markdown) { MermaidFenceNormalizer.normalize(markdown) }
+    // Guard inline <svg>…</svg> blocks: marked's HTML-block rule ends a block
+    // at the first blank line, which truncates large SVGs mid-way. The guard
+    // lifts SVGs out; the renderer re-injects them after marked.parse via
+    // getSvg. Pure logic — see SvgGuard and its JVM tests.
+    val guarded = remember(normalized) { SvgGuard.guard(normalized) }
+
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            val bridge = SourceBridge(markdown, isDark)
+            val bridge = SourceBridge(guarded.markdown, isDark, guarded.svgs)
             WebView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -59,14 +82,28 @@ fun MarkdownView(
                 isVerticalScrollBarEnabled = true
                 addJavascriptInterface(bridge, "mdreaderNative")
                 webViewClient = WebViewClient()
+                // Forward JS console output to logcat (tag MDreaderWeb) so renderer
+                // issues stay observable via `adb logcat` during development.
+                webChromeClient = object : WebChromeClient() {
+                    override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
+                        Log.i(
+                            "MDreaderWeb",
+                            "${consoleMessage?.message()} (${consoleMessage?.sourceId()}:${consoleMessage?.lineNumber()})",
+                        )
+                        return true
+                    }
+                }
                 tag = bridge
                 loadUrl("file:///android_asset/render/index.html")
             }
         },
         update = { webView ->
             val bridge = webView.tag as SourceBridge
-            val changed = bridge.markdownSource != markdown || bridge.darkMode != isDark
-            bridge.markdownSource = markdown
+            val changed = bridge.markdownSource != guarded.markdown ||
+                bridge.darkMode != isDark ||
+                bridge.svgs != guarded.svgs
+            bridge.markdownSource = guarded.markdown
+            bridge.svgs = guarded.svgs
             bridge.darkMode = isDark
             // After the first render, re-render in place on content/theme change
             // (no shell reload, so no flicker).

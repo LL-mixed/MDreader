@@ -93,6 +93,12 @@ body.dark  hr { background: #21262d; }
 
 img { max-width: 100%; height: auto; border-radius: 6px; }
 svg { max-width: 100%; height: auto; }
+/* An inline SVG authored with a viewBox but no width/height has no intrinsic
+   size and would collapse to 0×0. Give it the content width; height follows
+   from the viewBox aspect ratio. The .mermaid override (higher specificity)
+   keeps Mermaid's own SVGs at their natural size; KaTeX emits no SVGs. */
+#content svg[viewBox]:not([width]):not([height]) { width: 100%; height: auto; }
+#content .mermaid svg { width: auto; }
 
 blockquote {
   margin: 0 0 16px;
@@ -131,6 +137,29 @@ pre code {
   background: transparent;
   font-size: 0.85em;
   white-space: pre;
+}
+
+/* mermaid diagrams */
+.mermaid {
+  text-align: center;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+.mermaid-error {
+  color: #b00020;
+  background: rgba(176, 0, 32, 0.08);
+  border-left: 3px solid #b00020;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.8em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-align: left;
 }
 
 /* tables */

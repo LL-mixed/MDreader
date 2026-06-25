@@ -11,17 +11,34 @@
     document.body.className = dark ? 'dark' : 'light';
 
     var root = document.getElementById('content');
-    var html = window.marked ? window.marked.parse(src) : '<pre>' + src + '</pre>';
-    root.innerHTML = html;
+    root.innerHTML = renderMarkdown(src);
 
     if (window.katex) { renderMath(root); }
-    if (window.mermaid) { renderMermaid(root); }
+    renderMermaid(root);
     if (window.hljs) {
       document.querySelectorAll('pre code').forEach(function (block) {
         try { window.hljs.highlightElement(block); } catch (e) { /* ignore */ }
       });
     }
     if (native) { native.markRendered(); }
+  }
+
+  // Parses [src] with marked and restores SVGs that Kotlin's SvgGuard lifted
+  // out (each top-level <svg>…</svg> was replaced by a \u0001{index}\u0002
+  // placeholder before reaching here). marked follows CommonMark's HTML-block
+  // rule that ends a block at the first blank line, which truncates large
+  // SVGs mid-way; doing the lift in Kotlin keeps that logic JVM-tested and
+  // fenced-code-aware (see SvgGuard). Mermaid SVG never reaches marked, so it
+  // is unaffected.
+  function renderMarkdown(src) {
+    var html = window.marked ? window.marked.parse(src) : '<pre>' + src + '</pre>';
+    var native = window.mdreaderNative;
+    if (native && typeof native.getSvg === 'function') {
+      html = html.replace(/\u0001(\d+)\u0002/g, function (_, i) {
+        return native.getSvg(Number(i));
+      });
+    }
+    return html;
   }
 
   window.MDreader = { render: render };
@@ -84,27 +101,56 @@
     }
   }
 
-  // Replaces fenced mermaid blocks with rendered SVG diagrams.
+  // Replaces fenced mermaid blocks with rendered SVG diagrams. Uses the
+  // Mermaid 11 API — mermaid.initialize() + async mermaid.render(id, code) —
+  // which is the path that renders reliably on-device; the legacy
+  // mermaid.init() from 9.x did not. Non-standard fence tags (```sequence,
+  // ```gantt, …) are normalized to ```mermaid before reaching the WebView
+  // (see MermaidFenceNormalizer), so only the `mermaid` tag is handled here.
+  var mermaidSeq = 0;
   function renderMermaid(root) {
     var isDark = /(^|\s)dark(\s|$)/.test(document.body.className);
-    var blocks = root.querySelectorAll('pre code.language-mermaid');
-    if (!blocks.length) return;
-    blocks.forEach(function (code, i) {
+    var tasks = [];
+    root.querySelectorAll('pre code.language-mermaid').forEach(function (code) {
       var pre = code.parentNode;
       if (!pre || pre.tagName !== 'PRE') return;
       var div = document.createElement('div');
       div.className = 'mermaid';
-      div.id = 'mdr-mermaid-' + i;
-      div.textContent = code.textContent;
       pre.parentNode.replaceChild(div, pre);
+      tasks.push({ div: div, code: code.textContent });
     });
+    if (!tasks.length) return;
+    if (window.mermaid) { renderMermaidDiagrams(tasks, isDark); return; }
+    // mermaid.min.js assigns globalThis.mermaid at the tail of the bundle. In
+    // the rare case render() runs before that assignment, retry once shortly
+    // after so diagrams still render instead of being silently dropped.
+    setTimeout(function () { if (window.mermaid) renderMermaidDiagrams(tasks, isDark); }, 300);
+  }
+
+  async function renderMermaidDiagrams(tasks, isDark) {
     try {
-      window.mermaid.init({
+      window.mermaid.initialize({
         startOnLoad: false,
         theme: isDark ? 'dark' : 'default',
         securityLevel: 'loose',
-        fontFamily: 'inherit'
-      }, root.querySelectorAll('.mermaid'));
-    } catch (e) { /* ignore */ }
+        fontFamily: 'inherit',
+        flowchart: { useMaxWidth: true, htmlLabels: true }
+      });
+    } catch (e) { /* ignore init error; per-diagram render surfaces real failures */ }
+    for (var i = 0; i < tasks.length; i++) {
+      var t = tasks[i];
+      try {
+        var id = 'mdr-mermaid-' + (++mermaidSeq);
+        var result = await window.mermaid.render(id, t.code);
+        t.div.innerHTML = result.svg;
+      } catch (e) {
+        t.div.innerHTML =
+          '<div class="mermaid-error">⚠ Mermaid ' + escapeHtml(String((e && e.message) || e)) + '</div>';
+      }
+    }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 })();

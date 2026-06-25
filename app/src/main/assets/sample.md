@@ -75,6 +75,15 @@ flowchart LR
     D --> C
 ```
 
+```sequence
+sequenceDiagram
+    participant U as 用户
+    participant A as MDreader
+    U->>A: 点开 .md 文件
+    A->>A: 计算哈希 / 去重缓存
+    A-->>U: 渲染图文（含图表 / 公式）
+```
+
 ## SVG 与图片
 
 内联 SVG（由 WebView 原生渲染）：
