@@ -72,6 +72,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
     }
+    sourceSets {
+        getByName("main") {
+            assets.srcDir(rootProject.projectDir.parentFile.resolve("shared"))
+        }
+    }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

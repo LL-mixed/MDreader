@@ -1,18 +1,25 @@
-*.iml
-.gradle/
-/local.properties
-/.idea/
-/keystore/
+# OS
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
-/app/build/
+
+# --- Android (android/) ---
+android/.gradle/
+android/local.properties
+android/**/build/
+android/captures/
+android/.cxx/
+android/.externalNativeBuild/
+**/.idea/
+*.iml
 *.apk
 *.aab
 *.ap_
 *.dex
 *.keystore
 !debug.keystore
+
+# --- macOS (macos/) ---
+macos/**/*.xcodeproj
+macos/**/*.xcworkspace
+macos/build/
+**/xcuserdata/
+**/DerivedData/
