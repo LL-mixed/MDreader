@@ -26,6 +26,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mdreader.macos
         PRODUCT_NAME: MDreader
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   MDreaderTests:
     type: bundle.unit-test
     platform: macOS

@@ -25,7 +25,8 @@ DENSITIES = {
     "xxxhdpi": 192,
 }
 
-RES_DIR = os.path.join(os.path.dirname(__file__), "..", "app", "src", "main", "res")
+ANDROID_RES = os.path.join(os.path.dirname(__file__), "..", "android", "app", "src", "main", "res")
+MAC_ASSETS = os.path.join(os.path.dirname(__file__), "..", "macos", "MDreader", "Assets.xcassets")
 
 TOP = (30, 58, 138)      # #1E3A8A deep blue
 BOTTOM = (59, 130, 246)  # #3B82F6 bright blue
@@ -86,14 +87,49 @@ def make_icon(s):
     return img
 
 
-def main():
+def gen_android():
     for density, s in DENSITIES.items():
-        out_dir = os.path.join(RES_DIR, "mipmap-" + density)
+        out_dir = os.path.join(ANDROID_RES, "mipmap-" + density)
         os.makedirs(out_dir, exist_ok=True)
         img = make_icon(s)
         img.save(os.path.join(out_dir, "ic_launcher.png"))
         img.save(os.path.join(out_dir, "ic_launcher_round.png"))
-        print(f"{density}: {s}x{s} -> {out_dir}")
+        print(f"android {density}: {s}x{s} -> {out_dir}")
+
+
+def gen_mac():
+    import json
+    set_dir = os.path.join(MAC_ASSETS, "AppIcon.appiconset")
+    os.makedirs(set_dir, exist_ok=True)
+    sizes = [16, 32, 64, 128, 256, 512, 1024]
+    for s in sizes:
+        make_icon(s).save(os.path.join(set_dir, f"icon_{s}.png"))
+    slots = [
+        ("icon_16.png", "1x", "16x16"),
+        ("icon_32.png", "2x", "16x16"),
+        ("icon_32.png", "1x", "32x32"),
+        ("icon_64.png", "2x", "32x32"),
+        ("icon_128.png", "1x", "128x128"),
+        ("icon_256.png", "2x", "128x128"),
+        ("icon_256.png", "1x", "256x256"),
+        ("icon_512.png", "2x", "256x256"),
+        ("icon_512.png", "1x", "512x512"),
+        ("icon_1024.png", "2x", "512x512"),
+    ]
+    contents = {
+        "images": [{"filename": f, "idiom": "mac", "scale": sc, "size": sz} for f, sc, sz in slots],
+        "info": {"author": "xcode", "version": 1},
+    }
+    with open(os.path.join(set_dir, "Contents.json"), "w") as f:
+        json.dump(contents, f, indent=2)
+    with open(os.path.join(MAC_ASSETS, "Contents.json"), "w") as f:
+        json.dump({"info": {"author": "xcode", "version": 1}}, f, indent=2)
+    print(f"macos AppIcon ({len(sizes)} sizes) -> {set_dir}")
+
+
+def main():
+    gen_android()
+    gen_mac()
 
 
 if __name__ == "__main__":
