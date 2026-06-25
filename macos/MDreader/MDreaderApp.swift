@@ -21,7 +21,8 @@ struct MDreaderApp: App {
             ContentView()
                 .environmentObject(model)
                 .onOpenURL { url in model.open(url) }
+                .onAppear { model.refreshDocs() }
         }
-        .defaultSize(width: 900, height: 640)
+        .defaultSize(width: 1000, height: 640)
     }
 }

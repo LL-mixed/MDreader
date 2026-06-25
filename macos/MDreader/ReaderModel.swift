@@ -12,6 +12,9 @@ final class ReaderModel: ObservableObject {
     @Published var markdown: String = ReaderModel.sampleMarkdown
     @Published var isDark: Bool = false
     @Published var title: String = "MDreader"
+    @Published var docs: [DocInfo] = []
+    @Published var query: String = ""
+    @Published var selectedDocID: UUID?
     var repository: DocRepository?
 
     init(repository: DocRepository? = nil) {
@@ -23,6 +26,16 @@ final class ReaderModel: ObservableObject {
         title = "MDreader"
     }
 
+    func refreshDocs() {
+        docs = repository?.all() ?? []
+    }
+
+    var filteredDocs: [DocInfo] {
+        let q = query.lowercased()
+        guard !q.isEmpty else { return docs }
+        return docs.filter { $0.title.lowercased().contains(q) }
+    }
+
     func open(_ url: URL) {
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         openText(text, named: url.lastPathComponent, sourceURI: url.path)
@@ -32,5 +45,25 @@ final class ReaderModel: ObservableObject {
         markdown = text
         title = (named as NSString).deletingPathExtension
         repository?.cache(title: title, markdown: text, sourceURI: sourceURI)
+        refreshDocs()
+    }
+
+    func openCached(_ doc: DocInfo) {
+        guard let text = repository?.loadContent(id: doc.id) else { return }
+        markdown = text
+        title = doc.title
+        selectedDocID = doc.id
+    }
+
+    func deleteDoc(id: UUID) {
+        repository?.delete(id: id)
+        if selectedDocID == id { selectedDocID = nil }
+        refreshDocs()
+    }
+
+    func toggleFavorite(id: UUID) {
+        guard let doc = docs.first(where: { $0.id == id }) else { return }
+        repository?.setFavorite(id: id, favorite: !doc.favorite)
+        refreshDocs()
     }
 }

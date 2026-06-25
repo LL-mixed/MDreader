@@ -44,13 +44,15 @@ final class DocRepository {
         DocStore.write(docsDir: docsDir, id: doc.id, markdown: markdown)
     }
 
-    func all() -> [CachedDoc] {
+    func all() -> [DocInfo] {
         let context = ModelContext(container)
         let descriptor = FetchDescriptor<CachedDoc>(sortBy: [SortDescriptor(\.openedAt, order: .reverse)])
-        return (try? context.fetch(descriptor)) ?? []
+        return ((try? context.fetch(descriptor)) ?? []).map {
+            DocInfo(id: $0.id, title: $0.title, contentHash: $0.contentHash, openedAt: $0.openedAt, favorite: $0.favorite, charCount: $0.charCount)
+        }
     }
 
-    func search(_ query: String) -> [CachedDoc] {
+    func search(_ query: String) -> [DocInfo] {
         let q = query.lowercased()
         return all().filter { $0.title.lowercased().contains(q) }
     }
