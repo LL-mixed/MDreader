@@ -1,26 +1,38 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @State private var isDark = false
-
-    private let sampleMarkdown: String = {
-        guard let url = Bundle.main.url(forResource: "sample", withExtension: "md", subdirectory: "shared"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else {
-            return "# MDreader\n\n无法加载样例文档。"
-        }
-        return text
-    }()
+    @EnvironmentObject private var model: ReaderModel
 
     var body: some View {
-        MarkdownWebView(markdown: sampleMarkdown, isDark: isDark)
+        MarkdownWebView(markdown: model.markdown, isDark: model.isDark)
+            .navigationTitle(model.title)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        isDark.toggle()
+                        model.isDark.toggle()
                     } label: {
-                        Label(isDark ? "浅色" : "深色", systemImage: isDark ? "sun.max" : "moon")
+                        Label(model.isDark ? "浅色" : "深色", systemImage: model.isDark ? "sun.max" : "moon")
                     }
                 }
             }
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                handleDrop(providers)
+                return true
+            }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) {
+        guard let provider = providers.first else { return }
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            var url: URL?
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let str = item as? String {
+                url = URL(string: str)
+            }
+            guard let resolved = url else { return }
+            DispatchQueue.main.async { model.open(resolved) }
+        }
     }
 }

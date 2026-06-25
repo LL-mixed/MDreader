@@ -21,5 +21,6 @@ android/.externalNativeBuild/
 macos/**/*.xcodeproj
 macos/**/*.xcworkspace
 macos/build/
+macos/MDreader/Info.plist
 **/xcuserdata/
 **/DerivedData/
