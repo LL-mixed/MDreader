@@ -15,6 +15,9 @@ final class ReaderModel: ObservableObject {
     @Published var docs: [DocInfo] = []
     @Published var query: String = ""
     @Published var selectedDocID: UUID?
+    @Published var outline: [OutlineItem] = []
+    @Published var activeHeadingIndex: Int? = nil
+    @Published var scrollRequest: Int? = nil
     var repository: DocRepository?
 
     init(repository: DocRepository? = nil) {
@@ -24,6 +27,7 @@ final class ReaderModel: ObservableObject {
     func loadSample() {
         markdown = Self.sampleMarkdown
         title = "MDreader"
+        resetOutline()
     }
 
     func refreshDocs() {
@@ -46,6 +50,7 @@ final class ReaderModel: ObservableObject {
         title = (named as NSString).deletingPathExtension
         repository?.cache(title: title, markdown: text, sourceURI: sourceURI)
         refreshDocs()
+        resetOutline()
     }
 
     func openCached(_ doc: DocInfo) {
@@ -53,6 +58,7 @@ final class ReaderModel: ObservableObject {
         markdown = text
         title = doc.title
         selectedDocID = doc.id
+        resetOutline()
     }
 
     func deleteDoc(id: UUID) {
@@ -65,5 +71,15 @@ final class ReaderModel: ObservableObject {
         guard let doc = docs.first(where: { $0.id == id }) else { return }
         repository?.setFavorite(id: id, favorite: !doc.favorite)
         refreshDocs()
+    }
+
+    func jumpToHeading(_ index: Int) {
+        scrollRequest = index
+    }
+
+    private func resetOutline() {
+        outline = []
+        activeHeadingIndex = nil
+        scrollRequest = nil
     }
 }

@@ -20,7 +20,6 @@ struct LibraryView: View {
                 docList
             }
         }
-        .frame(minWidth: 240)
     }
 
     private var searchBar: some View {

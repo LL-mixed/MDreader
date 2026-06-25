@@ -113,6 +113,8 @@ xcodebuild -project MDreader.xcodeproj -scheme MDreader -destination 'platform=m
 5. **MM5 内容管理**：Sidebar 列表（按日期分组）、搜索、详情、删除、收藏（对应 Android DateBuckets/Titles/Library）。✅（`NavigationSplitView` + `LibraryView`；`DateBuckets`/`Titles` Swift 移植；右键 contextMenu 删除/收藏；repository 返回值类型 `DocInfo` 避免 SwiftData fault）
 6. **MM6 图标与发布**：应用图标、名称、Release `.app` / DMG。
 
+**大纲（Outline）**：sidebar 顶部「库/大纲」切换；大纲数据来自 render.js 的 DOM 标题（`indexHeadings`/`onActiveHeading`/`scrollToHeading`，与 Android 共享零改动），点击跳转 + 滚动高亮当前标题（对应 Android `OutlineDrawer`）。
+
 ## 编码约定
 
 - 不使用 shell 脚本改动代码；单次少量修改。

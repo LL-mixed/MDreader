@@ -5,7 +5,10 @@ import WebKit
 struct MarkdownWebView: NSViewRepresentable {
     let markdown: String
     let isDark: Bool
+    var scrollRequest: Int? = nil
     var onDropText: ((String, String) -> Void)? = nil
+    var onOutline: (([OutlineItem]) -> Void)? = nil
+    var onActiveHeading: ((Int) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(markdown: markdown, isDark: isDark)
@@ -28,6 +31,8 @@ struct MarkdownWebView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         context.coordinator.webView = webView
         context.coordinator.onDropText = onDropText
+        context.coordinator.onOutline = onOutline
+        context.coordinator.onActiveHeading = onActiveHeading
 
         let renderDir = Bundle.main.resourceURL!.appendingPathComponent("shared/render")
         let indexURL = renderDir.appendingPathComponent("index.html")
@@ -39,6 +44,15 @@ struct MarkdownWebView: NSViewRepresentable {
         let coord = context.coordinator
         coord.markdown = markdown
         coord.isDark = isDark
+        coord.onDropText = onDropText
+        coord.onOutline = onOutline
+        coord.onActiveHeading = onActiveHeading
+
+        if let req = scrollRequest, req != coord.lastScrollRequest {
+            coord.lastScrollRequest = req
+            webView.evaluateJavaScript("window.MDreader && window.MDreader.scrollToHeading(\(req))")
+        }
+
         guard coord.hasRendered else { return }
         guard coord.lastMarkdown != markdown || coord.lastDark != isDark else { return }
         coord.lastMarkdown = markdown
@@ -72,7 +86,10 @@ struct MarkdownWebView: NSViewRepresentable {
         var hasRendered = false
         var lastMarkdown: String
         var lastDark: Bool
+        var lastScrollRequest: Int? = nil
         var onDropText: ((String, String) -> Void)?
+        var onOutline: (([OutlineItem]) -> Void)?
+        var onActiveHeading: ((Int) -> Void)?
 
         init(markdown: String, isDark: Bool) {
             self.markdown = markdown
@@ -121,6 +138,16 @@ struct MarkdownWebView: NSViewRepresentable {
                 if let text = body["text"] as? String {
                     let name = body["name"] as? String ?? "Untitled"
                     onDropText?(text, name)
+                }
+            case "onOutline":
+                if let json = body["json"] as? String,
+                   let data = json.data(using: .utf8),
+                   let items = try? JSONDecoder().decode([OutlineItem].self, from: data) {
+                    onOutline?(items)
+                }
+            case "onActiveHeading":
+                if let index = body["index"] as? Int {
+                    onActiveHeading?(index)
                 }
             default:
                 break
