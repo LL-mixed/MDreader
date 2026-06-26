@@ -55,7 +55,7 @@ struct OutlineRow: View {
                 .padding(.trailing, 8)
             Spacer()
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, CGFloat(4 * zoom))
         .background(
             isActive ? Color.accentColor.opacity(0.1) : Color.clear,
             in: Rectangle()
