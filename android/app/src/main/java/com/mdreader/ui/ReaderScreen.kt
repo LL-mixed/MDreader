@@ -1,5 +1,6 @@
 package com.mdreader.ui
 
+import android.content.Context
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -39,27 +41,13 @@ import com.mdreader.data.DocRepository
 import com.mdreader.render.MarkdownView
 import com.mdreader.render.OutlineController
 import com.mdreader.render.OutlineItem
+import com.mdreader.render.ZoomWebView
+import com.mdreader.util.ContentHash
 import kotlinx.coroutines.launch
 
-/** Window width (dp) at/above which the outline stays pinned (Material medium window). */
 private const val EXPANDED_WIDTH_DP = 600
-
-/** Width of the pinned outline panel on expanded windows; keeps the article the focus. */
 private val OutlinePanelWidth = 300.dp
 
-/**
- * Full-screen reader: a top bar (back + outline toggle) over the rendered
- * [markdown]. On compact (portrait) windows the outline is a left modal drawer;
- * on expanded (landscape/large) windows it is a fixed-width side panel so it
- * stays glanceable without crowding out the article. The layout is hand-rolled
- * rather than PermanentNavigationDrawer, which sizes the drawer too wide on
- * phones and lets the outline swallow the reading area.
- *
- * Outline data and scroll targets are DOM-sourced (see MarkdownView/render.js):
- * [onOutline] receives the heading list after each render, [onActiveHeading]
- * the index of the heading currently in view. [OutlineController] scrolls to a
- * heading on tap.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReaderScreen(
@@ -77,8 +65,16 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     val isExpanded = LocalConfiguration.current.screenWidthDp >= EXPANDED_WIDTH_DP
 
-    // Reset transient outline state when the document changes; the renderer
-    // repopulates both right after the next render.
+    val context = LocalContext.current
+    val prefs = remember { context.getSharedPreferences("mdreader_zoom", Context.MODE_PRIVATE) }
+    var textZoom by remember(markdown) {
+        mutableStateOf(prefs.getInt(ContentHash.sha256Hex(markdown), 100).coerceIn(ZoomWebView.MIN, ZoomWebView.MAX))
+    }
+    val onZoomChange: (Int) -> Unit = { new ->
+        textZoom = new
+        prefs.edit().putInt(ContentHash.sha256Hex(markdown), new).apply()
+    }
+
     LaunchedEffect(markdown) {
         outline = emptyList()
         activeIndex = null
@@ -118,6 +114,8 @@ fun ReaderScreen(
                 markdown = markdown,
                 isDark = isDark,
                 controller = controller,
+                textZoom = textZoom,
+                onZoomChange = onZoomChange,
                 onOutline = { outline = it },
                 onActiveHeading = { activeIndex = it },
                 onBack = onBack,
@@ -145,6 +143,8 @@ fun ReaderScreen(
                 markdown = markdown,
                 isDark = isDark,
                 controller = controller,
+                textZoom = textZoom,
+                onZoomChange = onZoomChange,
                 onOutline = { outline = it },
                 onActiveHeading = { activeIndex = it },
                 onBack = onBack,
@@ -163,6 +163,8 @@ private fun ReaderContent(
     markdown: String,
     isDark: Boolean,
     controller: OutlineController,
+    textZoom: Int,
+    onZoomChange: (Int) -> Unit,
     onOutline: (List<OutlineItem>) -> Unit,
     onActiveHeading: (Int) -> Unit,
     onBack: () -> Unit,
@@ -200,6 +202,8 @@ private fun ReaderContent(
             markdown = markdown,
             isDark = isDark,
             controller = controller,
+            textZoom = textZoom,
+            onZoomChange = onZoomChange,
             onOutline = onOutline,
             onActiveHeading = onActiveHeading,
             modifier = Modifier.fillMaxSize().padding(innerPadding),
@@ -207,7 +211,6 @@ private fun ReaderContent(
     }
 }
 
-/** Reader entry that loads a cached document by id, showing a spinner until ready. */
 @Composable
 fun ReaderFromCache(
     docId: Long,

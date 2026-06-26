@@ -96,6 +96,8 @@ fun MarkdownView(
     markdown: String,
     isDark: Boolean,
     controller: OutlineController,
+    textZoom: Int = 100,
+    onZoomChange: (Int) -> Unit = {},
     modifier: Modifier = Modifier,
     onOutline: (List<OutlineItem>) -> Unit = {},
     onActiveHeading: (Int) -> Unit = {},
@@ -114,7 +116,7 @@ fun MarkdownView(
         modifier = modifier,
         factory = { context ->
             val bridge = SourceBridge(guarded.markdown, isDark, guarded.svgs, onOutline, onActiveHeading)
-            WebView(context).apply {
+            ZoomWebView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
@@ -123,6 +125,9 @@ fun MarkdownView(
                 settings.loadWithOverviewMode = true
                 settings.cacheMode = WebSettings.LOAD_NO_CACHE
                 isVerticalScrollBarEnabled = true
+                currentTextZoom = textZoom
+                settings.textZoom = textZoom
+                this.onZoomChange = onZoomChange
                 addJavascriptInterface(bridge, "mdreaderNative")
                 webViewClient = WebViewClient()
                 // Forward JS console output to logcat (tag MDreaderWeb) so renderer
@@ -141,16 +146,20 @@ fun MarkdownView(
                 loadUrl("file:///android_asset/render/index.html")
             }
         },
-        update = { webView ->
+        update = { view ->
+            val webView = view as ZoomWebView
             val bridge = webView.tag as SourceBridge
+            webView.onZoomChange = onZoomChange
+            if (webView.settings.textZoom != textZoom) {
+                webView.settings.textZoom = textZoom
+                webView.currentTextZoom = textZoom
+            }
             val changed = bridge.markdownSource != guarded.markdown ||
                 bridge.darkMode != isDark ||
                 bridge.svgs != guarded.svgs
             bridge.markdownSource = guarded.markdown
             bridge.svgs = guarded.svgs
             bridge.darkMode = isDark
-            // After the first render, re-render in place on content/theme change
-            // (no shell reload, so no flicker).
             if (changed && bridge.renderedOnce) {
                 webView.evaluateJavascript("window.MDreader && window.MDreader.render()", null)
             }
