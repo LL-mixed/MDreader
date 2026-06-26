@@ -74,7 +74,9 @@ final class ReaderModel: ObservableObject {
         markdown = text
         title = doc.title
         selectedDocID = doc.id
-        currentSourceURL = nil
+        currentSourceURL = doc.sourceURI.flatMap {
+            FileManager.default.fileExists(atPath: $0) ? URL(fileURLWithPath: $0) : nil
+        }
         resetOutline()
         restoreZoom()
     }
@@ -109,7 +111,7 @@ final class ReaderModel: ObservableObject {
               !cmd.isEmpty else { return }
         let process = Process()
         process.launchPath = "/bin/sh"
-        process.arguments = ["-c", "\(cmd) \"\(url.path)\""]
+        process.arguments = ["-c", "open -a \"\(cmd)\" \"\(url.path)\""]
         try? process.run()
     }
 

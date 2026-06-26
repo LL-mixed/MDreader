@@ -15,6 +15,7 @@ struct ContentView: View {
             MarkdownWebView(
                 markdown: model.markdown,
                 isDark: model.isDark,
+                baseDir: model.currentSourceURL?.deletingLastPathComponent(),
                 zoom: model.zoom,
                 scrollRequest: model.scrollRequest,
                 exportRequest: model.exportRequest,
@@ -60,6 +61,7 @@ struct ContentView: View {
                 }
             }
         }
+        .preferredColorScheme(model.isDark ? .dark : .light)
         .environmentObject(model)
         .onAppear {
             model.repository = repository

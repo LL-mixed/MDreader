@@ -18,6 +18,7 @@ final class ZoomWebView: WKWebView {
 struct MarkdownWebView: NSViewRepresentable {
     let markdown: String
     let isDark: Bool
+    var baseDir: URL? = nil
     var zoom: Double = 1.0
     var scrollRequest: Int? = nil
     var exportRequest: Int = 0
@@ -50,6 +51,7 @@ struct MarkdownWebView: NSViewRepresentable {
         context.coordinator.onDropText = onDropText
         context.coordinator.onOutline = onOutline
         context.coordinator.onActiveHeading = onActiveHeading
+        context.coordinator.baseDir = baseDir
 
         let renderDir = Bundle.main.resourceURL!.appendingPathComponent("shared/render")
         let indexURL = renderDir.appendingPathComponent("index.html")
@@ -61,6 +63,7 @@ struct MarkdownWebView: NSViewRepresentable {
         let coord = context.coordinator
         coord.markdown = markdown
         coord.isDark = isDark
+        coord.baseDir = baseDir
         coord.onDropText = onDropText
         coord.onOutline = onOutline
         coord.onActiveHeading = onActiveHeading
@@ -120,10 +123,66 @@ struct MarkdownWebView: NSViewRepresentable {
         """
     }
 
+    /// Rewrites relative image URLs (`![alt](rel.png)`) to absolute file:// URLs
+    /// resolved against the document's directory, so WKWebView can load figures
+    /// stored alongside the .md. Absolute (http/file/path) URLs are left as-is.
+    static func resolveImages(_ markdown: String, baseDir: URL) -> String {
+        let pattern = #"(!\[[^\]]*\]\()([^)]+)(\))"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return markdown }
+        let ns = markdown as NSString
+        let matches = regex.matches(in: markdown, range: NSRange(location: 0, length: ns.length))
+        var result = ""
+        var pos = 0
+        for m in matches {
+            guard m.numberOfRanges >= 4 else { continue }
+            result += ns.substring(with: NSRange(location: pos, length: m.range.location - pos))
+            let g1 = ns.substring(with: m.range(at: 1))
+            let original = ns.substring(with: m.range(at: 2))
+            let g3 = ns.substring(with: m.range(at: 3))
+            var src = original
+            if let spaceIdx = src.firstIndex(of: " ") {
+                src = String(src[..<spaceIdx])
+            }
+            if src.hasPrefix("http://") || src.hasPrefix("https://") || src.hasPrefix("/") || src.hasPrefix("file:") || src.hasPrefix("#") {
+                result += g1 + original + g3
+            } else {
+                let absURL = baseDir.appendingPathComponent(src).standardizedFileURL
+                let ext = (src as NSString).pathExtension.lowercased()
+                if ext == "svg" {
+                    if let svgText = try? String(contentsOf: absURL, encoding: .utf8) {
+                        result += "\n\n" + svgText + "\n\n"
+                    } else {
+                        result += g1 + original + g3
+                    }
+                } else {
+                    let mime: String
+                    switch ext {
+                    case "png": mime = "image/png"
+                    case "jpg", "jpeg": mime = "image/jpeg"
+                    case "gif": mime = "image/gif"
+                    case "webp": mime = "image/webp"
+                    default: mime = "application/octet-stream"
+                    }
+                    if let data = try? Data(contentsOf: absURL) {
+                        result += "\(g1)data:\(mime);base64,\(data.base64EncodedString())\(g3)"
+                    } else {
+                        result += g1 + original + g3
+                    }
+                }
+            }
+            pos = m.range.location + m.range.length
+        }
+        if pos < ns.length {
+            result += ns.substring(from: pos)
+        }
+        return result
+    }
+
     final class Coordinator: NSObject, WKScriptMessageHandler {
         weak var webView: WKWebView?
         var markdown: String
         var isDark: Bool
+        var baseDir: URL? = nil
         var hasRendered = false
         var lastMarkdown: String
         var lastDark: Bool
@@ -157,7 +216,8 @@ struct MarkdownWebView: NSViewRepresentable {
         }
 
         func payloadJSON() -> String {
-            let guarded = SvgGuard.protect(MermaidFenceNormalizer.normalize(markdown))
+            let resolved = baseDir.map { MarkdownWebView.resolveImages(markdown, baseDir: $0) } ?? markdown
+            let guarded = SvgGuard.protect(MermaidFenceNormalizer.normalize(resolved))
             let payload: [String: Any] = [
                 "md": guarded.markdown,
                 "dark": isDark,

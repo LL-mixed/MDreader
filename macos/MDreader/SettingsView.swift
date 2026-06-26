@@ -6,10 +6,10 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("外部编辑器") {
-                TextField("编辑器命令",
+                TextField("应用名称",
                           text: $settings.settings.editorCommand,
-                          prompt: Text("例如：code  或  open -a 'Visual Studio Code'"))
-                Text("命令会在 shell（/bin/sh -c）中执行，当前文件路径会以引号包裹追加在末尾。")
+                          prompt: Text("例如：Typora、Visual Studio Code"))
+                Text("用 macOS「打开方式」语义调用该应用打开当前文件（等价于 open -a <应用名> <文件>）。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
