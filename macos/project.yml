@@ -30,8 +30,10 @@ targets:
             CFBundleTypeRole: Viewer
             LSItemContentTypes:
               - com.mdreader.markdown
+              - net.daringfireball.markdown
+              - public.plain-text
             LSHandlerRank: Alternate
-        UTImportedTypeDeclarations:
+        UTExportedTypeDeclarations:
           - UTTypeIdentifier: com.mdreader.markdown
             UTTypeDescription: Markdown
             UTTypeConformsTo:
