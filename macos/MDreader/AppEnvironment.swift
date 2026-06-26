@@ -8,6 +8,10 @@ private struct ZoomStoreKey: EnvironmentKey {
     static let defaultValue: ZoomStore? = nil
 }
 
+private struct SessionStoreKey: EnvironmentKey {
+    static let defaultValue: SessionStore? = nil
+}
+
 extension EnvironmentValues {
     var mdRepository: DocRepository? {
         get { self[RepositoryKey.self] }
@@ -16,5 +20,9 @@ extension EnvironmentValues {
     var mdZoomStore: ZoomStore? {
         get { self[ZoomStoreKey.self] }
         set { self[ZoomStoreKey.self] = newValue }
+    }
+    var mdSessionStore: SessionStore? {
+        get { self[SessionStoreKey.self] }
+        set { self[SessionStoreKey.self] = newValue }
     }
 }

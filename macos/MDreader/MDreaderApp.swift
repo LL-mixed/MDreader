@@ -6,6 +6,7 @@ struct MDreaderApp: App {
     @StateObject private var settingsStore: SettingsStore
     let repository: DocRepository
     let zoomStore: ZoomStore
+    let sessionStore: SessionStore
 
     init() {
         let container: ModelContainer
@@ -17,6 +18,7 @@ struct MDreaderApp: App {
         let settings = SettingsStore()
         repository = DocRepository(container: container)
         zoomStore = ZoomStore()
+        sessionStore = SessionStore()
         _settingsStore = StateObject(wrappedValue: settings)
     }
 
@@ -26,6 +28,7 @@ struct MDreaderApp: App {
                 .environmentObject(settingsStore)
                 .environment(\.mdRepository, repository)
                 .environment(\.mdZoomStore, zoomStore)
+                .environment(\.mdSessionStore, sessionStore)
         }
         .defaultSize(width: 1000, height: 640)
         .commands {

@@ -19,7 +19,8 @@ final class DocRepository {
         }
     }
 
-    func cache(title: String, markdown: String, sourceURI: String?) {
+    @discardableResult
+    func cache(title: String, markdown: String, sourceURI: String?) -> UUID {
         let hash = ContentHash.sha256Hex(markdown)
         let now = Date()
         let context = ModelContext(container)
@@ -27,7 +28,7 @@ final class DocRepository {
         if let existing = (try? context.fetch(descriptor))?.first {
             existing.openedAt = now
             try? context.save()
-            return
+            return existing.id
         }
         let resolvedTitle = title.isEmpty ? Self.defaultTitle : title
         let doc = CachedDoc(
@@ -42,13 +43,14 @@ final class DocRepository {
         context.insert(doc)
         try? context.save()
         DocStore.write(docsDir: docsDir, id: doc.id, markdown: markdown)
+        return doc.id
     }
 
     func all() -> [DocInfo] {
         let context = ModelContext(container)
         let descriptor = FetchDescriptor<CachedDoc>(sortBy: [SortDescriptor(\.openedAt, order: .reverse)])
         return ((try? context.fetch(descriptor)) ?? []).map {
-            DocInfo(id: $0.id, title: $0.title, contentHash: $0.contentHash, openedAt: $0.openedAt, favorite: $0.favorite, charCount: $0.charCount)
+            DocInfo(id: $0.id, title: $0.title, contentHash: $0.contentHash, sourceURI: $0.sourceURI, openedAt: $0.openedAt, favorite: $0.favorite, charCount: $0.charCount)
         }
     }
 
@@ -84,5 +86,29 @@ final class DocRepository {
             try? context.save()
         }
         DocStore.delete(docsDir: docsDir, id: id)
+    }
+
+    /// Re-reads the original file backing `id`. If it exists and its content differs
+    /// from the cached snapshot, updates the cached content + metadata. Returns true
+    /// when a refresh actually happened. No-op (false) when there is no source or the
+    /// content is unchanged.
+    @discardableResult
+    func refreshFromSource(id: UUID) -> Bool {
+        let context = ModelContext(container)
+        let descriptor = FetchDescriptor<CachedDoc>(predicate: #Predicate { $0.id == id })
+        guard let doc = (try? context.fetch(descriptor))?.first,
+              let path = doc.sourceURI,
+              let text = try? String(contentsOf: URL(fileURLWithPath: path), encoding: .utf8) else {
+            return false
+        }
+        let hash = ContentHash.sha256Hex(text)
+        guard hash != doc.contentHash else { return false }
+        doc.contentHash = hash
+        doc.charCount = text.count
+        doc.sizeBytes = text.utf8.count
+        doc.openedAt = Date()
+        try? context.save()
+        DocStore.write(docsDir: docsDir, id: id, markdown: text)
+        return true
     }
 }

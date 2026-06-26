@@ -21,8 +21,11 @@ final class ReaderModel: ObservableObject {
     @Published var zoom: Double = 1.0
     @Published var currentSourceURL: URL? = nil
     @Published var exportRequest: Int = 0
+    @Published var returnRequest: Int = 0
+    @Published var navigatedAway: Bool = false
     var repository: DocRepository?
     var zoomStore: ZoomStore?
+    var sessionStore: SessionStore?
     var settings: SettingsStore?
 
     init(repository: DocRepository? = nil) {
@@ -63,13 +66,16 @@ final class ReaderModel: ObservableObject {
         markdown = text
         title = (named as NSString).deletingPathExtension
         currentSourceURL = sourceURL
-        repository?.cache(title: title, markdown: text, sourceURI: sourceURI)
+        if let id = repository?.cache(title: title, markdown: text, sourceURI: sourceURI) {
+            sessionStore?.setLastDocID(id)
+        }
         refreshDocs()
         resetOutline()
         restoreZoom()
     }
 
     func openCached(_ doc: DocInfo) {
+        let refreshed = repository?.refreshFromSource(id: doc.id) ?? false
         guard let text = repository?.loadContent(id: doc.id) else { return }
         markdown = text
         title = doc.title
@@ -79,6 +85,28 @@ final class ReaderModel: ObservableObject {
         }
         resetOutline()
         restoreZoom()
+        sessionStore?.setLastDocID(doc.id)
+        if refreshed { refreshDocs() }
+    }
+
+    /// Manually forces a re-read of the original file for `doc`, then displays it.
+    func refreshDoc(_ doc: DocInfo) {
+        repository?.refreshFromSource(id: doc.id)
+        refreshDocs()
+        if let latest = docs.first(where: { $0.id == doc.id }) {
+            openCached(latest)
+        }
+    }
+
+    /// Restores the last-opened document on a normal launch; clears the record if
+    /// the stored doc no longer exists. Invoked only when no explicit doc is requested.
+    func restoreLastDoc() {
+        guard let id = sessionStore?.lastDocID else { return }
+        if let doc = docs.first(where: { $0.id == id }) {
+            openCached(doc)
+        } else {
+            sessionStore?.setLastDocID(nil)
+        }
     }
 
     func deleteDoc(id: UUID) {
@@ -103,6 +131,10 @@ final class ReaderModel: ObservableObject {
 
     func exportPDF() {
         exportRequest += 1
+    }
+
+    func goBackToDocument() {
+        returnRequest += 1
     }
 
     func editCurrent() {

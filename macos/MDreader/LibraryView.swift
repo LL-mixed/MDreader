@@ -81,10 +81,16 @@ struct LibraryView: View {
     @ViewBuilder
     private func contextMenuItems(for doc: DocInfo) -> some View {
         Button {
-            openWindow(value: doc.id)
+            WindowTabber.openDocAsTab(id: doc.id, using: openWindow)
         } label: {
             Text("在新 tab 中打开")
         }
+        Button {
+            model.refreshDoc(doc)
+        } label: {
+            Text("从原文件刷新")
+        }
+        .disabled(!canRefresh(doc))
         Button {
             model.toggleFavorite(id: doc.id)
         } label: {
@@ -98,6 +104,11 @@ struct LibraryView: View {
         } label: {
             Label("删除", systemImage: "trash")
         }
+    }
+
+    private func canRefresh(_ doc: DocInfo) -> Bool {
+        guard let path = doc.sourceURI else { return false }
+        return FileManager.default.fileExists(atPath: path)
     }
 }
 

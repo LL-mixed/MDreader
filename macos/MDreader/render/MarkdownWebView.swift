@@ -22,10 +22,12 @@ struct MarkdownWebView: NSViewRepresentable {
     var zoom: Double = 1.0
     var scrollRequest: Int? = nil
     var exportRequest: Int = 0
+    var returnRequest: Int = 0
     var onDropText: ((String, String) -> Void)? = nil
     var onOutline: (([OutlineItem]) -> Void)? = nil
     var onActiveHeading: ((Int) -> Void)? = nil
     var onCommandScroll: ((CGFloat) -> Void)? = nil
+    var onNavigatedAway: ((Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(markdown: markdown, isDark: isDark)
@@ -47,11 +49,13 @@ struct MarkdownWebView: NSViewRepresentable {
         ))
         let webView = ZoomWebView(frame: .zero, configuration: config)
         webView.onCommandScroll = onCommandScroll
+        webView.navigationDelegate = context.coordinator
         context.coordinator.webView = webView
         context.coordinator.onDropText = onDropText
         context.coordinator.onOutline = onOutline
         context.coordinator.onActiveHeading = onActiveHeading
         context.coordinator.baseDir = baseDir
+        context.coordinator.onNavigatedAway = onNavigatedAway
 
         let renderDir = Bundle.main.resourceURL!.appendingPathComponent("shared/render")
         let indexURL = renderDir.appendingPathComponent("index.html")
@@ -67,6 +71,7 @@ struct MarkdownWebView: NSViewRepresentable {
         coord.onDropText = onDropText
         coord.onOutline = onOutline
         coord.onActiveHeading = onActiveHeading
+        coord.onNavigatedAway = onNavigatedAway
         webView.onCommandScroll = onCommandScroll
 
         if webView.pageZoom != zoom {
@@ -81,6 +86,13 @@ struct MarkdownWebView: NSViewRepresentable {
         if exportRequest != coord.lastExportRequest {
             coord.lastExportRequest = exportRequest
             Self.exportPDF(webView)
+        }
+
+        if returnRequest != coord.lastReturnRequest {
+            coord.lastReturnRequest = returnRequest
+            coord.pendingReload = true
+            let renderDir = Bundle.main.resourceURL!.appendingPathComponent("shared/render")
+            webView.loadFileURL(renderDir.appendingPathComponent("index.html"), allowingReadAccessTo: renderDir)
         }
 
         guard coord.hasRendered else { return }
@@ -123,9 +135,6 @@ struct MarkdownWebView: NSViewRepresentable {
         """
     }
 
-    /// Rewrites relative image URLs (`![alt](rel.png)`) to absolute file:// URLs
-    /// resolved against the document's directory, so WKWebView can load figures
-    /// stored alongside the .md. Absolute (http/file/path) URLs are left as-is.
     static func resolveImages(_ markdown: String, baseDir: URL) -> String {
         let pattern = #"(!\[[^\]]*\]\()([^)]+)(\))"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return markdown }
@@ -178,7 +187,7 @@ struct MarkdownWebView: NSViewRepresentable {
         return result
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         weak var webView: WKWebView?
         var markdown: String
         var isDark: Bool
@@ -188,15 +197,39 @@ struct MarkdownWebView: NSViewRepresentable {
         var lastDark: Bool
         var lastScrollRequest: Int? = nil
         var lastExportRequest: Int = 0
+        var lastReturnRequest: Int = 0
+        var pendingReload = false
         var onDropText: ((String, String) -> Void)?
         var onOutline: (([OutlineItem]) -> Void)?
         var onActiveHeading: ((Int) -> Void)?
+        var onNavigatedAway: ((Bool) -> Void)?
 
         init(markdown: String, isDark: Bool) {
             self.markdown = markdown
             self.isDark = isDark
             self.lastMarkdown = markdown
             self.lastDark = isDark
+        }
+
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if let u = navigationAction.request.url {
+                if u.isFileURL && u.path.contains("render/index.html") {
+                    onNavigatedAway?(false)
+                } else if u.scheme == "http" || u.scheme == "https" {
+                    onNavigatedAway?(true)
+                }
+            }
+            decisionHandler(.allow)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            if pendingReload {
+                pendingReload = false
+                let js = "window.__mdrPayload = \(payloadJSON()); if (window.MDreader) { window.MDreader.render(); }"
+                webView.evaluateJavaScript(js)
+            }
         }
 
         func bridgeScript() -> String {

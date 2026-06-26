@@ -5,6 +5,7 @@ struct ContentView: View {
     let initialDocID: UUID?
     @Environment(\.mdRepository) private var repository
     @Environment(\.mdZoomStore) private var zoomStore
+    @Environment(\.mdSessionStore) private var sessionStore
     @EnvironmentObject private var settingsStore: SettingsStore
     @StateObject private var model = ReaderModel()
 
@@ -12,20 +13,34 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView()
         } detail: {
-            MarkdownWebView(
-                markdown: model.markdown,
-                isDark: model.isDark,
-                baseDir: model.currentSourceURL?.deletingLastPathComponent(),
-                zoom: model.zoom,
-                scrollRequest: model.scrollRequest,
-                exportRequest: model.exportRequest,
-                onDropText: { model.openText($0, named: $1) },
-                onOutline: { model.outline = $0 },
-                onActiveHeading: { model.activeHeadingIndex = $0 },
-                onCommandScroll: { delta in
-                    if delta > 0 { model.zoomIn() } else { model.zoomOut() }
+            ZStack(alignment: .topLeading) {
+                MarkdownWebView(
+                    markdown: model.markdown,
+                    isDark: model.isDark,
+                    baseDir: model.currentSourceURL?.deletingLastPathComponent(),
+                    zoom: model.zoom,
+                    scrollRequest: model.scrollRequest,
+                    exportRequest: model.exportRequest,
+                    returnRequest: model.returnRequest,
+                    onDropText: { model.openText($0, named: $1) },
+                    onOutline: { model.outline = $0 },
+                    onActiveHeading: { model.activeHeadingIndex = $0 },
+                    onCommandScroll: { delta in
+                        if delta > 0 { model.zoomIn() } else { model.zoomOut() }
+                    },
+                    onNavigatedAway: { model.navigatedAway = $0 }
+                )
+
+                if model.navigatedAway {
+                Button {
+                    model.goBackToDocument()
+                } label: {
+                    Label("返回文档", systemImage: "chevron.left")
                 }
-            )
+                .buttonStyle(.borderedProminent)
+                .padding(10)
+                }
+            }
             .navigationTitle(model.title)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -66,10 +81,13 @@ struct ContentView: View {
         .onAppear {
             model.repository = repository
             model.zoomStore = zoomStore
+            model.sessionStore = sessionStore
             model.settings = settingsStore
             model.refreshDocs()
             if let id = initialDocID, let doc = model.docs.first(where: { $0.id == id }) {
                 model.openCached(doc)
+            } else if initialDocID == nil {
+                model.restoreLastDoc()
             }
             configureTabbing()
         }
