@@ -72,6 +72,7 @@ fun ReaderScreen(
     val controller = remember { OutlineController() }
     var outline by remember { mutableStateOf<List<OutlineItem>>(emptyList()) }
     var activeIndex by remember { mutableStateOf<Int?>(null) }
+    var outlineVisible by remember { mutableStateOf(true) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val isExpanded = LocalConfiguration.current.screenWidthDp >= EXPANDED_WIDTH_DP
@@ -87,19 +88,30 @@ fun ReaderScreen(
         controller.scrollToHeading(index)
         if (!isExpanded) scope.launch { drawerState.close() }
     }
+    val onToggleOutline: () -> Unit = {
+        if (isExpanded) {
+            outlineVisible = !outlineVisible
+        } else {
+            scope.launch {
+                if (drawerState.isOpen) drawerState.close() else drawerState.open()
+            }
+        }
+    }
 
     if (isExpanded) {
         Row(modifier.fillMaxSize()) {
-            Surface(
-                modifier = Modifier.width(OutlinePanelWidth).fillMaxHeight(),
-                tonalElevation = 1.dp,
-            ) {
-                OutlineDrawer(
-                    items = outline,
-                    activeIndex = activeIndex,
-                    onItemClick = onItemClick,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            if (outlineVisible) {
+                Surface(
+                    modifier = Modifier.width(OutlinePanelWidth).fillMaxHeight(),
+                    tonalElevation = 1.dp,
+                ) {
+                    OutlineDrawer(
+                        items = outline,
+                        activeIndex = activeIndex,
+                        onItemClick = onItemClick,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
             ReaderContent(
                 title = title,
@@ -109,8 +121,8 @@ fun ReaderScreen(
                 onOutline = { outline = it },
                 onActiveHeading = { activeIndex = it },
                 onBack = onBack,
-                showOutlineIcon = false,
-                onOpenOutline = {},
+                showOutlineIcon = outline.isNotEmpty(),
+                onOpenOutline = onToggleOutline,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
             )
         }
@@ -137,7 +149,7 @@ fun ReaderScreen(
                 onActiveHeading = { activeIndex = it },
                 onBack = onBack,
                 showOutlineIcon = outline.isNotEmpty(),
-                onOpenOutline = { scope.launch { drawerState.open() } },
+                onOpenOutline = onToggleOutline,
                 modifier = Modifier.fillMaxSize(),
             )
         }
