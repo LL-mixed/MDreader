@@ -46,10 +46,6 @@ impl DocRepository {
         })
     }
 
-    pub fn docs_dir(&self) -> &Path {
-        &self.docs_dir
-    }
-
     /// Insert or dedup. Returns the doc id (stable for identical content).
     pub fn cache(&self, title: &str, markdown: &str, source_uri: Option<&str>) -> Uuid {
         let hash = sha256_hex(markdown);
