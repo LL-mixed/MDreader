@@ -1,3 +1,10 @@
-// Persistence + content-addressing layer (LM2 adds the hash; LM4 adds SQLite cache + stores).
+// Persistence + content-addressing layer.
+// - content_hash: SHA-256 hex
+// - doc_info: immutable value snapshot of a cached doc (UI-facing)
+// - doc_store: filesystem body storage (<uuid>.md)
+// - cache: DocRepository — SQLite metadata + SHA-256 dedup + refresh-from-source
 
+pub mod cache;
 pub mod content_hash;
+pub mod doc_info;
+pub mod doc_store;
