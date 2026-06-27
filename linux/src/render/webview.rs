@@ -1,12 +1,13 @@
 // WebKitGTK webview + custom `mdreader://` URI scheme + JS bridge.
 //
-// Two responsibilities:
 // 1. Serve bundled `shared/render/**` from the GResource under a custom scheme, so relative
-//    references (render.css, katex/...) resolve same-origin — WebKitGTK cannot load `resource://`
-//    for web content (unlike WKWebView's bundle), so we provide our own equivalent.
-// 2. Inject the `mdreaderNative` bridge (a near-verbatim port of macOS's bridgeScript): the
-//    synchronous reads (getMarkdown/getDark/getSvg) come from a pre-populated `__mdrPayload`,
-//    and the async callbacks post to a registered message handler.
+//    references resolve same-origin — WebKitGTK cannot load `resource://` for web content
+//    (unlike WKWebView's bundle), so we provide our own equivalent.
+// 2. Inject the `mdreaderNative` bridge (port of macOS's bridgeScript): synchronous reads
+//    (getMarkdown/getDark/getSvg) come from a pre-populated `__mdrPayload`; async callbacks post
+//    to a registered message handler.
+
+use std::path::Path;
 
 use webkit6::prelude::*;
 use webkit6::{
@@ -36,10 +37,12 @@ pub fn register_scheme() {
 /// Build a webview wired with the bridge, then load the renderer page.
 pub fn new_webview() -> WebView {
     let wv = WebView::new();
+    let md = bundled_sample().unwrap_or_else(|| "# MDreader\n\n(no sample found)".to_string());
+    let payload = build_payload(&md, false, None);
     if let Some(ucm) = wv.user_content_manager() {
         ucm.register_script_message_handler(MSG_HANDLER, None);
         ucm.add_script(&UserScript::new(
-            &bridge_shim(),
+            &bridge_shim(&payload),
             UserContentInjectedFrames::AllFrames,
             UserScriptInjectionTime::Start,
             &[],
@@ -50,15 +53,27 @@ pub fn new_webview() -> WebView {
     wv
 }
 
-/// The bridge shim. LM1 uses a static sample payload to prove the pipeline; LM2 replaces it with
-/// the real preprocessed markdown + dark flag + SVG stash driven by app state.
-fn bridge_shim() -> String {
-    let payload = sample_payload();
+/// Run the native preprocessing pipeline (resolve images -> normalize mermaid fences ->
+/// guard SVGs) and return the JSON payload `{md, dark, svgs}`.
+pub fn build_payload(md: &str, dark: bool, base_dir: Option<&Path>) -> String {
+    let resolved = super::preprocess::resolve_images(md, base_dir);
+    let normalized = super::mermaid_fence::normalize(&resolved);
+    let guarded = super::svg_guard::protect(&normalized);
+    serde_json::json!({
+        "md": guarded.markdown,
+        "dark": dark,
+        "svgs": guarded.svgs,
+    })
+    .to_string()
+}
+
+/// The bridge shim: exposes `window.mdreaderNative` reading from `window.__mdrPayload`.
+fn bridge_shim(payload_json: &str) -> String {
     let h = MSG_HANDLER;
     let mut s = String::new();
     s.push_str("(function(){\n");
     s.push_str("  window.__mdrPayload = ");
-    s.push_str(&payload);
+    s.push_str(payload_json);
     s.push_str(";\n");
     s.push_str("  window.mdreaderNative = {\n");
     s.push_str("    getMarkdown: function(){ return window.__mdrPayload.md; },\n");
@@ -81,32 +96,13 @@ fn bridge_shim() -> String {
     s
 }
 
-/// LM1 payload: the bundled sample document, rendered light. (LM2 will thread real state.)
-fn sample_payload() -> String {
-    let md = gio::resources_lookup_data(
+fn bundled_sample() -> Option<String> {
+    let bytes = gio::resources_lookup_data(
         &format!("{PREFIX}/sample.md"),
         gio::ResourceLookupFlags::empty(),
     )
-    .map(|b| json_escape(std::str::from_utf8(b.as_ref()).unwrap_or("# MDreader\n")))
-    .unwrap_or_else(|_| "# MDreader\\n\\n(no sample found)".to_string());
-    format!("{{\"md\":\"{}\",\"dark\":false,\"svgs\":[]}}", md)
-}
-
-/// Minimal JSON string escaper (keeps the LM1 shim dependency-free; LM2 uses serde_json).
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 16);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out
+    .ok()?;
+    String::from_utf8(bytes.as_ref().to_vec()).ok()
 }
 
 /// Serve one render resource from the GResource.
