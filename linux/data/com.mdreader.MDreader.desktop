@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=MDreader
+GenericName=Markdown Reader
+Comment=Render and read Markdown beautifully
+Comment[zh_CN]=美观的 Markdown 阅读器
+Exec=mdreader %U
+Icon=com.mdreader.MDreader
+Terminal=false
+StartupNotify=true
+Categories=Office;TextEditor;Viewer;
+MimeType=text/markdown;text/x-markdown;application/markdown;
+Keywords=markdown;md;
