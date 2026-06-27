@@ -1,10 +1,10 @@
 // MDreader — native Linux Markdown reader (GTK4 + WebKitGTK6).
-// LM1: register embedded GResource + `mdreader://` scheme, open a window rendering shared/render.
 
+mod app;
 mod render;
 mod store;
 
-use gtk::prelude::*;
+use gio::prelude::*;
 use gtk::Application;
 
 const APP_ID: &str = "com.mdreader.MDreader";
@@ -13,18 +13,38 @@ fn main() {
     gio::resources_register_include!("render.gresource").expect("failed to register gresource");
     render::webview::register_scheme();
 
-    let app = Application::builder().application_id(APP_ID).build();
+    // HANDLES_OPEN so launching with file args routes to `open` (one window per file).
+    let app = Application::new(Some(APP_ID), gio::ApplicationFlags::HANDLES_OPEN);
+
     app.connect_activate(|app| {
-        let win = gtk::ApplicationWindow::builder()
-            .application(app)
-            .title("MDreader")
-            .default_width(1000)
-            .default_height(640)
-            .build();
-        let wv = render::webview::new_webview();
-        win.set_child(Some(&wv));
-        win.present();
+        app::open_doc_window(app, &render::webview::bundled_sample(), false, None, "MDreader");
+    });
+    app.connect_open(|app, files, _hint| {
+        for f in files {
+            open_file(app, f);
+        }
     });
 
     app.run();
+}
+
+fn open_file(app: &Application, file: &gio::File) {
+    let Some(path) = file.path() else {
+        eprintln!("mdreader: skipping non-local file: {}", file.uri());
+        return;
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("mdreader: failed to read {}: {e}", path.display());
+            return;
+        }
+    };
+    let title = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("MDreader")
+        .to_string();
+    let base = path.parent().map(|p| p.to_path_buf());
+    app::open_doc_window(app, &content, false, base, &title);
 }

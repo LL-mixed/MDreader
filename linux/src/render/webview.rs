@@ -6,6 +6,7 @@
 // 2. Inject the `mdreaderNative` bridge (port of macOS's bridgeScript): synchronous reads
 //    (getMarkdown/getDark/getSvg) come from a pre-populated `__mdrPayload`; async callbacks post
 //    to a registered message handler.
+// 3. Port of macOS's dropScript so dropping a .md onto the page opens it.
 
 use std::path::Path;
 
@@ -34,11 +35,16 @@ pub fn register_scheme() {
     ctx.register_uri_scheme(SCHEME, serve);
 }
 
-/// Build a webview wired with the bridge, then load the renderer page.
-pub fn new_webview() -> WebView {
+/// Build a webview wired with the bridge + drop handler, then load the renderer page.
+/// `on_drop(name, text)` is called when a .md file is dropped onto the page.
+pub fn new_webview(
+    md: &str,
+    dark: bool,
+    base_dir: Option<&Path>,
+    on_drop: Box<dyn Fn(&str, &str) + 'static>,
+) -> WebView {
     let wv = WebView::new();
-    let md = bundled_sample().unwrap_or_else(|| "# MDreader\n\n(no sample found)".to_string());
-    let payload = build_payload(&md, false, None);
+    let payload = build_payload(md, dark, base_dir);
     if let Some(ucm) = wv.user_content_manager() {
         ucm.register_script_message_handler(MSG_HANDLER, None);
         ucm.add_script(&UserScript::new(
@@ -48,9 +54,46 @@ pub fn new_webview() -> WebView {
             &[],
             &[],
         ));
+        ucm.add_script(&UserScript::new(
+            drop_script(),
+            UserContentInjectedFrames::AllFrames,
+            UserScriptInjectionTime::End,
+            &[],
+            &[],
+        ));
+        ucm.connect_script_message_received(Some(MSG_HANDLER), move |_ucm, value| {
+            let Some(ev) = value.object_get_property("event") else {
+                return;
+            };
+            let event = ev.to_str().to_string();
+            if event == "dropFile" {
+                let name = value
+                    .object_get_property("name")
+                    .map(|v| v.to_str().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "Untitled".to_string());
+                let text = value
+                    .object_get_property("text")
+                    .map(|v| v.to_str().to_string())
+                    .unwrap_or_default();
+                on_drop(&name, &text);
+            }
+            // onOutline / onActiveHeading / markRendered are wired into the sidebar in LM5.
+        });
     }
     wv.load_uri(INDEX_URI);
     wv
+}
+
+/// Push new markdown/dark/base into an already-loaded webview and re-render.
+/// (Used by the sidebar/library in LM5 to switch documents in place.)
+#[allow(dead_code)]
+pub fn render(webview: &WebView, md: &str, dark: bool, base_dir: Option<&Path>) {
+    let payload = build_payload(md, dark, base_dir);
+    let js = format!(
+        "window.__mdrPayload = {payload}; if (window.MDreader) {{ window.MDreader.render(); }}"
+    );
+    webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
 }
 
 /// Run the native preprocessing pipeline (resolve images -> normalize mermaid fences ->
@@ -65,6 +108,11 @@ pub fn build_payload(md: &str, dark: bool, base_dir: Option<&Path>) -> String {
         "svgs": guarded.svgs,
     })
     .to_string()
+}
+
+/// The bundled sample document (used when launched with no file).
+pub fn bundled_sample() -> String {
+    bundled_sample_impl().unwrap_or_else(|| "# MDreader\n\n(no sample found)".to_string())
 }
 
 /// The bridge shim: exposes `window.mdreaderNative` reading from `window.__mdrPayload`.
@@ -96,12 +144,30 @@ fn bridge_shim(payload_json: &str) -> String {
     s
 }
 
-fn bundled_sample() -> Option<String> {
-    let bytes = gio::resources_lookup_data(
-        &format!("{PREFIX}/sample.md"),
-        gio::ResourceLookupFlags::empty(),
-    )
-    .ok()?;
+/// Port of macOS dropScript: open a dropped .md file by reading it as text in-page.
+fn drop_script() -> &'static str {
+    r#"
+(function(){
+  document.addEventListener('dragover', function(e){ e.preventDefault(); });
+  document.addEventListener('drop', function(e){
+    e.preventDefault();
+    var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!f) return;
+    if (!/\.(md|markdown|mdown|mkd|mkdown)$/i.test(f.name || '')) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      window.webkit.messageHandlers.mdreaderNative.postMessage({event:'dropFile', name:f.name, text:reader.result});
+    };
+    reader.readAsText(f);
+  });
+})();
+"#
+}
+
+fn bundled_sample_impl() -> Option<String> {
+    let bytes =
+        gio::resources_lookup_data(&format!("{PREFIX}/sample.md"), gio::ResourceLookupFlags::empty())
+            .ok()?;
     String::from_utf8(bytes.as_ref().to_vec()).ok()
 }
 
