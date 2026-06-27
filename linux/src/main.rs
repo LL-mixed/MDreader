@@ -26,10 +26,13 @@ use store::zoom_store::ZoomStore;
 const APP_ID: &str = "com.mdreader.MDreader";
 
 fn main() {
+    // WebKit's GPU-compositing path calls abort() when it can't create a GBM EGL display (headless
+    // / NVIDIA-EGL / X-forwarded boxes). A Markdown reader doesn't need GPU compositing, so disable
+    // it up-front — the app runs everywhere without the user setting env vars.
+    std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+
     gio::resources_register_include!("render.gresource").expect("failed to register gresource");
     render::webview::register_scheme();
-    load_css();
-    register_icon();
 
     let ctx = Arc::new(AppContext {
         repo: Arc::new(DocRepository::open(&config::data_dir()).expect("failed to open cache")),
@@ -39,6 +42,13 @@ fn main() {
     });
 
     let app = Application::new(Some(APP_ID), gio::ApplicationFlags::HANDLES_OPEN);
+
+    // App-wide GTK setup must run AFTER gtk is initialized — CssProvider::new /
+    // IconTheme::default assert it. ::startup fires once, after init, before the first window.
+    app.connect_startup(|_| {
+        load_css();
+        register_icon();
+    });
 
     {
         let ctx = Arc::clone(&ctx);
