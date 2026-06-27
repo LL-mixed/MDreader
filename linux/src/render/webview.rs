@@ -16,12 +16,21 @@ use webkit6::{
     WebView,
 };
 
+use super::outline::{parse_outline, OutlineItem};
+
 pub const SCHEME: &str = "mdreader";
 const PREFIX: &str = "/com/mdreader/MDreader";
 /// Triple-slash so the path is `render/index.html` (empty authority) and relative refs resolve
 /// under the same scheme, e.g. `render.css` -> mdreader:///render/render.css.
 pub const INDEX_URI: &str = "mdreader:///render/index.html";
 pub const MSG_HANDLER: &str = "mdreaderNative";
+
+/// Host-side callbacks invoked from the JS bridge.
+pub struct Handlers {
+    pub on_drop: Box<dyn Fn(&str, &str) + 'static>,
+    pub on_outline: Box<dyn Fn(Vec<OutlineItem>) + 'static>,
+    pub on_active: Box<dyn Fn(i32) + 'static>,
+}
 
 /// Register the `mdreader://` scheme on the default web context. Call once at startup, before
 /// any webview is created (WebView::new() uses the default context).
@@ -35,14 +44,8 @@ pub fn register_scheme() {
     ctx.register_uri_scheme(SCHEME, serve);
 }
 
-/// Build a webview wired with the bridge + drop handler, then load the renderer page.
-/// `on_drop(name, text)` is called when a .md file is dropped onto the page.
-pub fn new_webview(
-    md: &str,
-    dark: bool,
-    base_dir: Option<&Path>,
-    on_drop: Box<dyn Fn(&str, &str) + 'static>,
-) -> WebView {
+/// Build a webview wired with the bridge + drop handler + message callbacks, then load the page.
+pub fn new_webview(md: &str, dark: bool, base_dir: Option<&Path>, handlers: Handlers) -> WebView {
     let wv = WebView::new();
     let payload = build_payload(md, dark, base_dir);
     if let Some(ucm) = wv.user_content_manager() {
@@ -66,19 +69,33 @@ pub fn new_webview(
                 return;
             };
             let event = ev.to_str().to_string();
-            if event == "dropFile" {
-                let name = value
-                    .object_get_property("name")
-                    .map(|v| v.to_str().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "Untitled".to_string());
-                let text = value
-                    .object_get_property("text")
-                    .map(|v| v.to_str().to_string())
-                    .unwrap_or_default();
-                on_drop(&name, &text);
+            match event.as_str() {
+                "dropFile" => {
+                    let name = value
+                        .object_get_property("name")
+                        .map(|v| v.to_str().to_string())
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(|| "Untitled".to_string());
+                    let text = value
+                        .object_get_property("text")
+                        .map(|v| v.to_str().to_string())
+                        .unwrap_or_default();
+                    (handlers.on_drop)(&name, &text);
+                }
+                "onOutline" => {
+                    if let Some(jv) = value.object_get_property("json") {
+                        if let Some(items) = parse_outline(&jv.to_str()) {
+                            (handlers.on_outline)(items);
+                        }
+                    }
+                }
+                "onActiveHeading" => {
+                    if let Some(iv) = value.object_get_property("index") {
+                        (handlers.on_active)(iv.to_int32());
+                    }
+                }
+                _ => {}
             }
-            // onOutline / onActiveHeading / markRendered are wired into the sidebar in LM5.
         });
     }
     wv.load_uri(INDEX_URI);
@@ -86,13 +103,22 @@ pub fn new_webview(
 }
 
 /// Push new markdown/dark/base into an already-loaded webview and re-render.
-/// (Used by the sidebar/library in LM5 to switch documents in place.)
-#[allow(dead_code)]
 pub fn render(webview: &WebView, md: &str, dark: bool, base_dir: Option<&Path>) {
     let payload = build_payload(md, dark, base_dir);
     let js = format!(
         "window.__mdrPayload = {payload}; if (window.MDreader) {{ window.MDreader.render(); }}"
     );
+    webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
+}
+
+/// Whole-page zoom (mirrors macOS pageZoom), range handled by the caller.
+pub fn set_zoom(webview: &WebView, zoom: f64) {
+    webview.set_zoom_level(zoom);
+}
+
+/// Scroll the document to outline heading `index`.
+pub fn scroll_to_heading(webview: &WebView, index: i32) {
+    let js = format!("if (window.MDreader) {{ window.MDreader.scrollToHeading({index}); }}");
     webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
 }
 
