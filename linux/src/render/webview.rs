@@ -10,10 +10,11 @@
 
 use std::path::Path;
 
+use glib::prelude::Cast;
 use webkit6::prelude::*;
 use webkit6::{
-    UserContentInjectedFrames, UserScript, UserScriptInjectionTime, URISchemeRequest, WebContext,
-    WebView,
+    NavigationPolicyDecision, PrintOperation, UserContentInjectedFrames, UserScript,
+    UserScriptInjectionTime, URISchemeRequest, WebContext, WebView,
 };
 
 use super::outline::{parse_outline, OutlineItem};
@@ -47,6 +48,30 @@ pub fn register_scheme() {
 /// Build a webview wired with the bridge + drop handler + message callbacks, then load the page.
 pub fn new_webview(md: &str, dark: bool, base_dir: Option<&Path>, handlers: Handlers) -> WebView {
     let wv = WebView::new();
+    // External http(s)/mailto links: hand them to the system browser instead of navigating
+    // the page away from the mdreader:// origin. (macOS loads such links inside the webview
+    // and offers a "返回文档" button; opening in the default browser is the cleaner, native
+    // Linux idiom and preserves the document — no back button needed.)
+    wv.connect_decide_policy(|_wv, decision, _kind| {
+        let Some(nav) = decision.downcast_ref::<NavigationPolicyDecision>() else {
+            return false;
+        };
+        let mut action = match nav.navigation_action() {
+            Some(a) => a,
+            None => return false,
+        };
+        let uri = action
+            .request()
+            .and_then(|r| r.uri())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if is_external_uri(&uri) {
+            open_in_browser(&uri);
+            decision.ignore();
+            return true;
+        }
+        false
+    });
     let payload = build_payload(md, dark, base_dir);
     if let Some(ucm) = wv.user_content_manager() {
         ucm.register_script_message_handler(MSG_HANDLER, None);
@@ -120,6 +145,17 @@ pub fn set_zoom(webview: &WebView, zoom: f64) {
 pub fn scroll_to_heading(webview: &WebView, index: i32) {
     let js = format!("if (window.MDreader) {{ window.MDreader.scrollToHeading({index}); }}");
     webview.evaluate_javascript(&js, None, None, None::<&gio::Cancellable>, |_| {});
+}
+
+/// Export the current page to PDF via WebKit's print dialog, pre-set to "Print to File" so the
+/// native dialog yields a PDF the user saves (mac parity: exportPDF + NSSavePanel). The user
+/// confirms the output path inside the dialog.
+pub fn export_pdf(webview: &WebView, parent: Option<&gtk::Window>) {
+    let op = PrintOperation::new(webview);
+    let settings = gtk::PrintSettings::new();
+    settings.set_printer("Print to File");
+    op.set_print_settings(&settings);
+    op.run_dialog(parent);
 }
 
 /// Run the native preprocessing pipeline (resolve images -> normalize mermaid fences ->
@@ -234,5 +270,41 @@ fn mime_for(path: &str) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         _ => "application/octet-stream",
+    }
+}
+
+/// True for URI schemes that should leave the reader (open in the system browser) rather than
+/// navigate the page. Our own `mdreader://` scheme, `file://`, and `#anchor` refs are internal.
+pub fn is_external_uri(uri: &str) -> bool {
+    let u = uri.trim_start();
+    let u = u.to_ascii_lowercase();
+    u.starts_with("http://") || u.starts_with("https://") || u.starts_with("mailto:")
+}
+
+/// Hand `uri` to the system's default handler via `xdg-open` (async, reaped by glib).
+fn open_in_browser(uri: &str) {
+    // POSIX single-quote the URI so spaces / shell metacharacters are inert.
+    let quoted = format!("'{}'", uri.replace('\'', "'\\''"));
+    let _ = glib::spawn_command_line_async(format!("xdg-open {quoted}"));
+}
+
+#[cfg(test)]
+mod uri_tests {
+    use super::*;
+
+    #[test]
+    fn external_schemes_recognized_case_insensitively() {
+        assert!(is_external_uri("http://example.com"));
+        assert!(is_external_uri("HTTPS://Example.COM/x"));
+        assert!(is_external_uri("mailto:foo@bar.com"));
+    }
+
+    #[test]
+    fn internal_and_relative_are_not_external() {
+        assert!(!is_external_uri("mdreader:///render/index.html"));
+        assert!(!is_external_uri("file:///tmp/a.md"));
+        assert!(!is_external_uri("#anchor"));
+        assert!(!is_external_uri("render/render.css"));
+        assert!(!is_external_uri(""));
     }
 }

@@ -139,11 +139,12 @@ cargo run -- path/to/file.md   # CLI 入口：打开 .md
 ### Linux 里程碑（Rust + GTK4 + WebKitGTK6，复用 shared/render）
 
 1. **LM1 脚手架**：cargo 工程、空 GTK4 窗口 + WebKitGTK6、`build.rs` 把 `../shared/render` 编进 GResource，`mdreader://` 自定义 scheme 同源加载；`cargo build` 出二进制。✅（已验证：sample.md 经 marked + highlight + KaTeX + Mermaid + inline-SVG + 表格 + 任务列表完整渲染）
-2. **LM2 渲染内核**：`mdreaderNative` 桥（复刻 macOS bridgeScript）+ payload；明暗主题。移植纯逻辑 + 单测对齐 macOS：`content_hash`（SHA-256 向量）/ `svg_guard` / `mermaid_fence` / `fence`。
-3. **LM3 文件打开者**：`GApplication::open` 处理 `.md` 参数；`.desktop` `MimeType=text/markdown;` + `xdg-mime`；窗口 `GtkDropTarget` + webview drop script。
-4. **LM4 缓存层**：rusqlite 元数据 + `$XDG_DATA_HOME/MDreader/docs/<uuid>.md` 正文 + SHA-256 去重（对应 macOS `CachedDoc`/`DocRepository`）；移植 + 单测。
-5. **LM5 内容管理**：`GtkOverlaySplitView` sidebar（库/大纲切换）+ 日期分组列表 + 搜索 + 收藏/删除/刷新；大纲 + 缩放（对应 macOS `LibraryView`/`OutlineView`/Zoom）。
-6. **LM6 图标与发布**：图标、`.desktop`、appdata、release 二进制；外部编辑器（xdg-open/配置命令）、PDF 导出（`WebKitPrintOperation`）、关于窗口。
+2. **LM2 渲染内核**：`mdreaderNative` 桥（复刻 macOS bridgeScript）+ payload；明暗主题。移植纯逻辑 + 单测对齐 macOS：`content_hash`（SHA-256 向量）/ `svg_guard` / `mermaid_fence` / `fence`。✅
+3. **LM3 文件打开者**：`GApplication::open` 处理 `.md` 参数；`.desktop` `MimeType=text/markdown;` + `xdg-mime`；窗口 drop + webview drop script。✅
+4. **LM4 缓存层**：rusqlite 元数据 + `$XDG_DATA_HOME/MDreader/docs/<uuid>.md` 正文 + SHA-256 去重（对应 macOS `CachedDoc`/`DocRepository`）；移植 + 单测。✅
+5. **LM5 内容管理**：`Paned` sidebar（库/大纲 `Stack`+`StackSwitcher` 切换）+ 日期分组列表 + 搜索 + 右键菜单（新窗口/刷新/收藏/删除）；大纲（DOM 标题 + 滚动高亮 + 字体随缩放）+ 缩放（工具栏 −/百分比/+/重置 + Ctrl±0 + Ctrl 滚轮 + 按 content-hash 持久化）；session restore。对应 macOS `LibraryView`/`OutlineView`/Zoom。✅
+6. **LM6 图标与发布**：图标（复用 macOS PNG，打进 GResource + `IconTheme::add_resource_path`，免安装即显示）、`.desktop`、`.metainfo.xml`、release 二进制；外部编辑器（配置命令或 `xdg-open`，**argv 直起不经 shell**）、PDF 导出（`WebKitPrintOperation` 预置 Print to File）、关于窗口（`GtkAboutDialog` + `build.rs` 注入 git hash/build time）、应用菜单（header hamburger `MenuButton`：关于/首选项/退出 + 快捷键）。✅（84 单测全绿；release 8.8M）
+   - **有意分歧（非缺陷）**：① 不做 macOS `WindowTabber` 标签合并（GNOME 无原生对应，「新窗口打开」即 Linux 等价）；② 外部 http(s) 链接交系统浏览器打开（而非 mac 的 webview 内加载 + 返回按钮，UX 更干净）；③ 编辑器配置为「命令」语义（如 `code`/`typora`/`code -n`）而非 mac 的「应用名 + `open -a`」。
 
 ## 编码约定
 

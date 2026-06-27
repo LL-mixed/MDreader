@@ -11,4 +11,5 @@ pub mod content_hash;
 pub mod doc_info;
 pub mod doc_store;
 pub mod session_store;
+pub mod settings_store;
 pub mod zoom_store;

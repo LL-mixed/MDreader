@@ -4,16 +4,17 @@
 
 use std::cell::RefCell;
 use std::path::PathBuf;
+use std::process::Command;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use gtk::gdk::{BUTTON_SECONDARY, ModifierType};
-use gtk::pango::EllipsizeMode;
+use gtk::pango::{AttrList, EllipsizeMode};
 use gtk::prelude::*;
 use gtk::{
-    Align, Application, ApplicationWindow, Box as GtkBox, Button, EventControllerKey, GestureClick,
-    HeaderBar, Label, ListBox, ListBoxRow, Orientation, Paned, Popover, ScrolledWindow,
-    SearchEntry, Stack, StackSwitcher,
+    Align, Application, ApplicationWindow, Box as GtkBox, Button, EventControllerKey,
+    EventControllerScroll, EventControllerScrollFlags, GestureClick, HeaderBar, Label, ListBox,
+    ListBoxRow, Orientation, Paned, Popover, ScrolledWindow, SearchEntry, Stack, StackSwitcher,
 };
 use uuid::Uuid;
 
@@ -21,15 +22,21 @@ use crate::render::outline::OutlineItem;
 use crate::render::webview;
 use crate::store::content_hash::sha256_hex;
 use crate::store::doc_info::DocInfo;
-use crate::store::{cache::DocRepository, session_store::SessionStore, zoom_store::ZoomStore};
+use crate::store::{
+    cache::DocRepository, session_store::SessionStore, settings_store::SettingsStore,
+    zoom_store::ZoomStore,
+};
 use crate::util::date_buckets::{self, DayBucket};
+use crate::util::markdown_ext;
 use crate::util::titles;
+use crate::util::zoom as zoom_util;
 
 /// Process-wide stores shared across windows.
 pub struct AppContext {
     pub repo: Arc<DocRepository>,
     pub zoom_store: Arc<Mutex<ZoomStore>>,
     pub session_store: Arc<Mutex<SessionStore>>,
+    pub settings: Arc<Mutex<SettingsStore>>,
 }
 
 pub enum InitialDoc {
@@ -49,15 +56,21 @@ struct State {
     window: ApplicationWindow,
     webview: Option<webkit6::WebView>,
     zoom_label: Label,
+    btn_out: Button,
+    btn_in: Button,
+    btn_reset: Button,
+    btn_edit: Button,
     library_list: ListBox,
     outline_list: ListBox,
     library_empty: Label,
+    outline_empty: Label,
     markdown: String,
     dark: bool,
     zoom: f64,
     current_doc_id: Option<Uuid>,
     current_hash: String,
     base_dir: Option<PathBuf>,
+    source: Option<String>,
     title: String,
     outline: Vec<OutlineItem>,
     active: Option<usize>,
@@ -77,6 +90,7 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     search.set_placeholder_text(Some("搜索"));
     let library_list = ListBox::new();
     library_list.set_selection_mode(gtk::SelectionMode::Single);
+    library_list.set_activate_on_single_click(true);
     library_list.add_css_class("navigation-sidebar");
     let library_empty = Label::new(Some("还没有缓存的文档\n打开或拖入 .md 即自动缓存"));
     library_empty.set_halign(Align::Center);
@@ -108,21 +122,40 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     sidebar.append(&stack);
     sidebar.set_size_request(260, -1);
 
-    // --- header bar (zoom + theme) ---
+    // --- header bar (zoom + edit/export + theme) ---
     let zoom_label = Label::builder().label("100%").width_chars(5).build();
     let btn_out = Button::from_icon_name("zoom-out-symbolic");
     let btn_in = Button::from_icon_name("zoom-in-symbolic");
     let btn_reset = Button::with_label("1:1");
+    let btn_edit = Button::from_icon_name("document-edit-symbolic");
+    btn_edit.set_tooltip_text(Some("用外部编辑器打开原文件"));
+    let btn_pdf = Button::from_icon_name("document-save-symbolic");
+    btn_pdf.set_tooltip_text(Some("导出 PDF"));
     let btn_theme = Button::from_icon_name("weather-clear-night-symbolic");
+    // Primary app menu (About / Preferences / Quit) — GNOME-native hamburger. The actions live on
+    // the GApplication (see main.rs setup_app_menu) and resolve from any window of the app.
+    let menu = gio::Menu::new();
+    menu.append(Some("关于 MDreader"), Some("app.about"));
+    menu.append(Some("首选项"), Some("app.preferences"));
+    menu.append(Some("退出 MDreader"), Some("app.quit"));
+    let menu_btn = gtk::MenuButton::new();
+    menu_btn.set_menu_model(Some(&menu));
+    menu_btn.set_icon_name("open-menu-symbolic");
+
     let header = HeaderBar::new();
     header.pack_start(&btn_out);
     header.pack_start(&zoom_label);
     header.pack_start(&btn_in);
     header.pack_start(&btn_reset);
+    // pack_end fills right-to-left; first call is rightmost → [pdf][edit][theme][menu].
+    header.pack_end(&menu_btn);
     header.pack_end(&btn_theme);
+    header.pack_end(&btn_edit);
+    header.pack_end(&btn_pdf);
 
     // resolve initial content
-    let (md, title, base, dark, zoom, doc_id, hash) = resolve_initial(ctx, &initial);
+    let ResolvedDoc { content: md, title, base, dark, zoom, doc_id, hash, source } =
+        resolve_initial(ctx, &initial);
 
     let state = Rc::new(RefCell::new(State {
         app: app.clone(),
@@ -130,15 +163,21 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
         window: window.clone(),
         webview: None,
         zoom_label: zoom_label.clone(),
+        btn_out: btn_out.clone(),
+        btn_in: btn_in.clone(),
+        btn_reset: btn_reset.clone(),
+        btn_edit: btn_edit.clone(),
         library_list: library_list.clone(),
         outline_list: outline_list.clone(),
         library_empty: library_empty.clone(),
+        outline_empty: outline_empty.clone(),
         markdown: md.clone(),
         dark,
         zoom,
         current_doc_id: doc_id,
         current_hash: hash.clone(),
         base_dir: base.clone(),
+        source,
         title: title.clone(),
         outline: Vec::new(),
         active: None,
@@ -152,19 +191,12 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
         base.as_deref(),
         webview::Handlers {
             on_drop: {
-                let ctx = ctx.clone();
-                let app = app.clone();
+                let s = state.clone();
                 Box::new(move |name, text| {
-                    open_window(
-                        &ctx,
-                        &app,
-                        InitialDoc::File {
-                            content: text.to_string(),
-                            title: titles::from_path(name),
-                            base: None,
-                            source: None,
-                        },
-                    );
+                    if !markdown_ext::is_markdown(name) {
+                        return;
+                    }
+                    apply_dropped_text(&s, text, name);
                 })
             },
             on_outline: {
@@ -179,6 +211,7 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     );
     webview::set_zoom(&wv, zoom);
     state.borrow_mut().webview = Some(wv.clone());
+    install_scroll_zoom(&state, &wv);
 
     // layout
     let content_scroll = scrolled(&wv);
@@ -206,6 +239,10 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     let s = state.clone();
     btn_theme.connect_clicked(move |_| toggle_theme(&s));
     let s = state.clone();
+    btn_edit.connect_clicked(move |_| edit_current(&s));
+    let s = state.clone();
+    btn_pdf.connect_clicked(move |_| export_current_pdf(&s));
+    let s = state.clone();
     search.connect_search_changed(move |e| {
         s.borrow_mut().query = e.text().to_string();
         refresh_library(&s);
@@ -230,29 +267,51 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
 
     refresh_library(&state);
     update_zoom_label(&state);
+    update_edit_sensitivity(&state);
     window.present();
 }
 
-fn resolve_initial(
-    ctx: &Arc<AppContext>,
-    initial: &InitialDoc,
-) -> (String, String, Option<PathBuf>, bool, f64, Option<Uuid>, String) {
+/// Resolved content for a freshly opened window. A named struct (not an 8-tuple) so callers
+/// can't silently transpose same-typed fields.
+struct ResolvedDoc {
+    content: String,
+    title: String,
+    base: Option<PathBuf>,
+    dark: bool,
+    zoom: f64,
+    doc_id: Option<Uuid>,
+    hash: String,
+    source: Option<String>,
+}
+
+fn resolve_initial(ctx: &Arc<AppContext>, initial: &InitialDoc) -> ResolvedDoc {
+    let sample = || ResolvedDoc {
+        content: webview::bundled_sample(),
+        title: "MDreader".to_string(),
+        base: None,
+        dark: false,
+        zoom: 1.0,
+        doc_id: None,
+        hash: String::new(),
+        source: None,
+    };
     match initial {
-        InitialDoc::Sample => (
-            webview::bundled_sample(),
-            "MDreader".to_string(),
-            None,
-            false,
-            1.0,
-            None,
-            String::new(),
-        ),
+        InitialDoc::Sample => sample(),
         InitialDoc::File { content, title, base, source } => {
             let hash = sha256_hex(content);
             let id = ctx.repo.cache(title, content, source.as_deref());
-            let _ = ctx.session_store.lock().unwrap().set_last_doc_id(Some(id));
-            let z = ctx.zoom_store.lock().unwrap().zoom_for(&hash).unwrap_or(1.0);
-            (content.clone(), title.clone(), base.clone(), false, z, Some(id), hash)
+            ctx.session_store.lock().unwrap().set_last_doc_id(Some(id));
+            let zoom = ctx.zoom_store.lock().unwrap().zoom_for(&hash).unwrap_or(1.0);
+            ResolvedDoc {
+                content: content.clone(),
+                title: title.clone(),
+                base: base.clone(),
+                dark: false,
+                zoom,
+                doc_id: Some(id),
+                hash,
+                source: source.clone(),
+            }
         }
         InitialDoc::Cached(id) => {
             let _ = ctx.repo.refresh_from_source(*id);
@@ -260,12 +319,21 @@ fn resolve_initial(
             if let Some(d) = doc {
                 if let Some(text) = ctx.repo.load_content(*id) {
                     let base = d.source_uri.as_ref().and_then(parent_of);
-                    let _ = ctx.session_store.lock().unwrap().set_last_doc_id(Some(*id));
-                    let z = ctx.zoom_store.lock().unwrap().zoom_for(&d.content_hash).unwrap_or(1.0);
-                    return (text, d.title, base, false, z, Some(*id), d.content_hash);
+                    ctx.session_store.lock().unwrap().set_last_doc_id(Some(*id));
+                    let zoom = ctx.zoom_store.lock().unwrap().zoom_for(&d.content_hash).unwrap_or(1.0);
+                    return ResolvedDoc {
+                        content: text,
+                        title: d.title,
+                        base,
+                        dark: false,
+                        zoom,
+                        doc_id: Some(*id),
+                        hash: d.content_hash,
+                        source: d.source_uri,
+                    };
                 }
             }
-            (webview::bundled_sample(), "MDreader".to_string(), None, false, 1.0, None, String::new())
+            sample()
         }
     }
 }
@@ -322,10 +390,13 @@ fn on_active(state: &Rc<RefCell<State>>, index: i32) {
 }
 
 fn refresh_outline(state: &Rc<RefCell<State>>) {
-    let (list, items) = {
+    let (list, items, zoom, empty) = {
         let s = state.borrow();
-        (s.outline_list.clone(), s.outline.clone())
+        (s.outline_list.clone(), s.outline.clone(), s.zoom, s.outline_empty.clone())
     };
+    // Placeholder is shown only when there are no headings (mac parity: OutlineView empty state
+    // is mutually exclusive with content).
+    empty.set_visible(items.is_empty());
     while let Some(child) = list.first_child() {
         list.remove(&child);
     }
@@ -334,6 +405,10 @@ fn refresh_outline(state: &Rc<RefCell<State>>) {
         row.set_widget_name(&item.index.to_string());
         let lbl = Label::new(Some(&item.text));
         lbl.set_halign(Align::Start);
+        // Outline text scales with zoom (mac parity: OutlineRow font size 13 * zoom).
+        let attrs = AttrList::new();
+        attrs.insert(gtk::pango::AttrFloat::new_scale(zoom));
+        lbl.set_attributes(Some(&attrs));
         lbl.set_margin_start((item.level.saturating_sub(1) as i32) * 12 + 6);
         lbl.set_ellipsize(EllipsizeMode::End);
         row.set_child(Some(&lbl));
@@ -361,14 +436,14 @@ fn select_active_outline(state: &Rc<RefCell<State>>) {
 }
 
 fn refresh_library(state: &Rc<RefCell<State>>) {
-    let (docs, query) = {
+    let (docs, query, current) = {
         let s = state.borrow();
         let docs = if s.query.trim().is_empty() {
             s.ctx.repo.all()
         } else {
             s.ctx.repo.search(&s.query)
         };
-        (docs, s.query.clone())
+        (docs, s.query.clone(), s.current_doc_id)
     };
     let _ = query;
     let list = state.borrow().library_list.clone();
@@ -378,6 +453,7 @@ fn refresh_library(state: &Rc<RefCell<State>>) {
     let now = now_millis();
     state.borrow().library_empty.set_visible(docs.is_empty());
 
+    let mut selected: Option<ListBoxRow> = None;
     for bucket in DayBucket::all() {
         let group: Vec<&DocInfo> = docs
             .iter()
@@ -396,9 +472,14 @@ fn refresh_library(state: &Rc<RefCell<State>>) {
         header.set_child(Some(&hlbl));
         list.append(&header);
         for doc in group {
-            list.append(&make_doc_row(state, doc));
+            let row = make_doc_row(state, doc);
+            if Some(doc.id) == current {
+                selected = Some(row.clone());
+            }
+            list.append(&row);
         }
     }
+    list.select_row(selected.as_ref());
 }
 
 fn make_doc_row(state: &Rc<RefCell<State>>, doc: &DocInfo) -> ListBoxRow {
@@ -450,15 +531,15 @@ fn build_context_menu(state: &Rc<RefCell<State>>, id: Uuid) -> Popover {
     };
     let b_open = mk("在新窗口打开");
     let b_refresh = mk("从原文件刷新");
-    let is_fav = state
-        .borrow()
-        .ctx
-        .repo
-        .all()
-        .iter()
-        .find(|d| d.id == id)
-        .map(|d| d.favorite)
+    let doc = state.borrow().ctx.repo.all().into_iter().find(|d| d.id == id);
+    let is_fav = doc.as_ref().map(|d| d.favorite).unwrap_or(false);
+    // Refresh is only meaningful when the original file still exists (mac parity: canRefresh).
+    let can_refresh = doc
+        .as_ref()
+        .and_then(|d| d.source_uri.as_ref())
+        .map(|p| std::path::Path::new(p).exists())
         .unwrap_or(false);
+    b_refresh.set_sensitive(can_refresh);
     let b_fav = mk(if is_fav { "取消收藏" } else { "收藏" });
     let b_del = mk("删除");
     b_del.add_css_class("destructive-action");
@@ -473,7 +554,12 @@ fn build_context_menu(state: &Rc<RefCell<State>>, id: Uuid) -> Popover {
     let s = state.clone();
     b_refresh.connect_clicked(move |_| {
         s.borrow().ctx.repo.refresh_from_source(id);
-        refresh_library(&s);
+        // If refreshing the doc currently in view, re-render it (mac parity: refreshDoc → openCached).
+        if s.borrow().current_doc_id == Some(id) {
+            open_cached(&s, id);
+        } else {
+            refresh_library(&s);
+        }
     });
     let s = state.clone();
     b_fav.connect_clicked(move |_| {
@@ -513,7 +599,7 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
         Some(d) => d,
         None => return,
     };
-    let _ = ctx.session_store.lock().unwrap().set_last_doc_id(Some(id));
+    ctx.session_store.lock().unwrap().set_last_doc_id(Some(id));
     let base = doc.source_uri.as_ref().and_then(parent_of);
     let zoom = ctx.zoom_store.lock().unwrap().zoom_for(&doc.content_hash).unwrap_or(1.0);
 
@@ -524,6 +610,7 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
         s.base_dir = base.clone();
         s.current_doc_id = Some(id);
         s.current_hash = doc.content_hash.clone();
+        s.source = doc.source_uri.clone();
         s.zoom = zoom;
         (s.dark, s.webview.clone(), s.window.clone(), doc.title.clone())
     };
@@ -532,13 +619,53 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
         webview::set_zoom(&wv, zoom);
         webview::render(&wv, &text, dark, base.as_deref());
     }
+    // Defer the rebuild: open_cached can run inside a row_activated emission
+    // (activate_on_single_click); mutating the emitting ListBox mid-emission is fragile.
+    {
+        let s = state.clone();
+        let _ = glib::idle_add_local_once(move || refresh_library(&s));
+    }
     update_zoom_label(state);
+    update_edit_sensitivity(state);
+}
+
+/// Replace the current window's content with dropped text (mac parity: openText/applyText — a
+/// drop replaces the current doc rather than spawning a new window; "open in new window" stays
+/// available from the library's context menu).
+fn apply_dropped_text(state: &Rc<RefCell<State>>, content: &str, name: &str) {
+    let title = titles::from_path(name);
+    let hash = sha256_hex(content);
+    let ctx = state.borrow().ctx.clone();
+    let id = ctx.repo.cache(&title, content, None);
+    ctx.session_store.lock().unwrap().set_last_doc_id(Some(id));
+    let zoom = ctx.zoom_store.lock().unwrap().zoom_for(&hash).unwrap_or(1.0);
+
+    let (dark, wv, window) = {
+        let mut s = state.borrow_mut();
+        s.markdown = content.to_string();
+        s.title = title.clone();
+        s.base_dir = None;
+        s.source = None;
+        s.current_doc_id = Some(id);
+        s.current_hash = hash;
+        s.zoom = zoom;
+        s.outline.clear();
+        s.active = None;
+        (s.dark, s.webview.clone(), s.window.clone())
+    };
+    window.set_title(Some(&title));
+    if let Some(wv) = wv {
+        webview::set_zoom(&wv, zoom);
+        webview::render(&wv, content, dark, None);
+    }
+    refresh_outline(state);
+    refresh_library(state);
+    update_zoom_label(state);
+    update_edit_sensitivity(state);
 }
 
 fn zoom_by(state: &Rc<RefCell<State>>, up: bool) {
-    let factor = 1.1f64;
-    let z = state.borrow().zoom;
-    let new = if up { (z * factor).min(3.0) } else { (z / factor).max(0.3) };
+    let new = zoom_util::step(state.borrow().zoom, up);
     apply_zoom(state, new);
 }
 
@@ -547,6 +674,7 @@ fn zoom_reset(state: &Rc<RefCell<State>>) {
 }
 
 fn apply_zoom(state: &Rc<RefCell<State>>, zoom: f64) {
+    let zoom = zoom_util::clamp(zoom);
     let (wv, hash, ctx) = {
         let mut s = state.borrow_mut();
         s.zoom = zoom;
@@ -559,12 +687,18 @@ fn apply_zoom(state: &Rc<RefCell<State>>, zoom: f64) {
     if let Some(wv) = wv {
         webview::set_zoom(&wv, zoom);
     }
+    refresh_outline(state); // outline font scales with zoom
     update_zoom_label(state);
 }
 
 fn update_zoom_label(state: &Rc<RefCell<State>>) {
-    let pct = (state.borrow().zoom * 100.0).round() as i32;
-    state.borrow().zoom_label.set_label(&format!("{pct}%"));
+    let s = state.borrow();
+    let z = s.zoom;
+    let pct = (z * 100.0).round() as i32;
+    s.zoom_label.set_label(&format!("{pct}%"));
+    s.btn_out.set_sensitive(z > zoom_util::MIN_ZOOM);
+    s.btn_in.set_sensitive(z < zoom_util::MAX_ZOOM);
+    s.btn_reset.set_sensitive((z - 1.0).abs() > 1e-9);
 }
 
 fn toggle_theme(state: &Rc<RefCell<State>>) {
@@ -579,6 +713,65 @@ fn toggle_theme(state: &Rc<RefCell<State>>) {
     if let Some(wv) = wv {
         webview::render(&wv, &md, dark, base.as_deref());
     }
+}
+
+/// Enable the "edit" button only when the current doc has a backing source file.
+fn update_edit_sensitivity(state: &Rc<RefCell<State>>) {
+    let (has_source, btn) = {
+        let s = state.borrow();
+        (s.source.is_some(), s.btn_edit.clone())
+    };
+    btn.set_sensitive(has_source);
+}
+
+/// Open the current doc's source file in the configured external editor; fall back to
+/// `xdg-open` when no command is set (a UX improvement over macOS, which disables the button).
+/// `editor_command` is a command (e.g. `code`, `typora`, `gedit`, or `code -n` with flags).
+fn edit_current(state: &Rc<RefCell<State>>) {
+    let (source, cmd) = {
+        let s = state.borrow();
+        let cmd = s.ctx.settings.lock().unwrap().editor_command().to_string();
+        (s.source.clone(), cmd)
+    };
+    let Some(path) = source else { return; };
+    let launcher = if cmd.trim().is_empty() { "xdg-open".to_string() } else { cmd };
+    // Spawn with the path as a real argv element — NO shell — so path bytes ($, backtick,
+    // newline, spaces) cannot be interpreted or break the launch. The command may carry flags
+    // (e.g. `code -n`), so split it on whitespace into program + leading args, then the path.
+    let mut parts = launcher.split_whitespace();
+    let Some(program) = parts.next() else { return; };
+    let mut command = Command::new(program);
+    for arg in parts {
+        command.arg(arg);
+    }
+    command.arg(&path);
+    let _ = command.spawn();
+}
+
+/// Export the current page to PDF via the native print dialog (pre-set to "Print to File").
+fn export_current_pdf(state: &Rc<RefCell<State>>) {
+    let (wv, window) = {
+        let s = state.borrow();
+        (s.webview.clone(), s.window.clone())
+    };
+    if let Some(wv) = wv {
+        webview::export_pdf(&wv, Some(window.upcast_ref::<gtk::Window>()));
+    }
+}
+
+/// Ctrl+scroll zooms the page (mac parity: ⌘-scroll). Plain scroll pans the document.
+fn install_scroll_zoom(state: &Rc<RefCell<State>>, wv: &webkit6::WebView) {
+    let scroll = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+    let s = state.clone();
+    scroll.connect_scroll(move |c, _dx, dy| {
+        if c.current_event_state().contains(ModifierType::CONTROL_MASK) {
+            zoom_by(&s, dy < 0.0);
+            gtk::Inhibit(true)
+        } else {
+            gtk::Inhibit(false)
+        }
+    });
+    wv.add_controller(scroll);
 }
 
 fn now_millis() -> i64 {
