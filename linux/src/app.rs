@@ -212,6 +212,7 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     webview::set_zoom(&wv, zoom);
     state.borrow_mut().webview = Some(wv.clone());
     install_scroll_zoom(&state, &wv);
+    install_drop_target(&state, &wv);
 
     // layout
     let content_scroll = scrolled(&wv);
@@ -772,6 +773,30 @@ fn install_scroll_zoom(state: &Rc<RefCell<State>>, wv: &webkit6::WebView) {
         }
     });
     wv.add_controller(scroll);
+}
+
+/// Native file drag-drop: receive a dropped `.md` as a `GFile`. This is the robust path on
+/// WebKitGTK, where the in-page HTML5 drop event does not reliably expose dropped files to JS
+/// (the macOS port relies on that page-level drop because WKWebView delivers it; Linux can't).
+fn install_drop_target(state: &Rc<RefCell<State>>, wv: &webkit6::WebView) {
+    let target = gtk::DropTarget::new(gio::File::static_type(), gtk::gdk::DragAction::COPY);
+    let s = state.clone();
+    target.connect_drop(move |_t, value, _x, _y| {
+        let Ok(file) = value.get::<gio::File>() else { return false; };
+        let Some(path) = file.path() else { return false; };
+        let path_str = path.to_string_lossy().to_string();
+        if !markdown_ext::is_markdown(&path_str) {
+            return false;
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                apply_dropped_text(&s, &text, &path_str);
+                true
+            }
+            Err(_) => false,
+        }
+    });
+    wv.add_controller(target);
 }
 
 fn now_millis() -> i64 {
