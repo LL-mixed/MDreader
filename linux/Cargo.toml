@@ -1,0 +1,22 @@
+[package]
+name = "mdreader"
+version = "0.1.0"
+edition = "2021"
+description = "MDreader — native Linux Markdown reader (GTK4 + WebKitGTK)"
+license = "MIT"
+
+[[bin]]
+name = "mdreader"
+path = "src/main.rs"
+
+[dependencies]
+gtk = { version = "0.6", package = "gtk4" }
+webkit6 = "0.1"
+glib = "0.17"
+gio = "0.17"
+
+[build-dependencies]
+glib-build-tools = "0.17"
+
+[profile.release]
+opt-level = 2
