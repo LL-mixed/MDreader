@@ -54,6 +54,7 @@ struct State {
     app: Application,
     ctx: Arc<AppContext>,
     window: ApplicationWindow,
+    title_label: Label,
     webview: Option<webkit6::WebView>,
     zoom_label: Label,
     btn_out: Button,
@@ -132,6 +133,13 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     let btn_pdf = Button::from_icon_name("document-save-symbolic");
     btn_pdf.set_tooltip_text(Some("导出 PDF"));
     let btn_theme = Button::from_icon_name("weather-clear-night-symbolic");
+    // Sidebar show/hide (mac parity: NavigationSplitView's built-in sidebar toggle).
+    let btn_sidebar = Button::from_icon_name("sidebar-show-symbolic");
+    btn_sidebar.set_tooltip_text(Some("显示/隐藏侧栏"));
+    // Doc title shown in the header center (the HeaderBar doubles as the window titlebar).
+    let title_label = Label::new(None);
+    title_label.set_ellipsize(EllipsizeMode::End);
+    title_label.set_max_width_chars(28);
     // Primary app menu (About / Preferences / Quit) — GNOME-native hamburger. The actions live on
     // the GApplication (see main.rs setup_app_menu) and resolve from any window of the app.
     let menu = gio::Menu::new();
@@ -143,6 +151,8 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     menu_btn.set_icon_name("open-menu-symbolic");
 
     let header = HeaderBar::new();
+    header.set_title_widget(Some(&title_label));
+    header.pack_start(&btn_sidebar);
     header.pack_start(&btn_out);
     header.pack_start(&zoom_label);
     header.pack_start(&btn_in);
@@ -161,6 +171,7 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
         app: app.clone(),
         ctx: ctx.clone(),
         window: window.clone(),
+        title_label: title_label.clone(),
         webview: None,
         zoom_label: zoom_label.clone(),
         btn_out: btn_out.clone(),
@@ -224,11 +235,12 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     paned.set_position(290);
     paned.set_vexpand(true);
 
-    let outer = GtkBox::new(Orientation::Vertical, 0);
-    outer.append(&header);
-    outer.append(&paned);
+    // HeaderBar is the window titlebar — one row of controls (GNOME-native). Putting it in the
+    // content instead makes GTK draw a second set of window buttons. The Paned is the window body.
+    window.set_titlebar(Some(&header));
+    window.set_child(Some(&paned));
     window.set_title(Some(&title));
-    window.set_child(Some(&outer));
+    state.borrow().title_label.set_label(&title);
 
     // --- wiring ---
     let s = state.clone();
@@ -243,6 +255,10 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     btn_edit.connect_clicked(move |_| edit_current(&s));
     let s = state.clone();
     btn_pdf.connect_clicked(move |_| export_current_pdf(&s));
+    let sb = sidebar_scroll.clone();
+    btn_sidebar.connect_clicked(move |_| {
+        sb.set_visible(!sb.is_visible());
+    });
     let s = state.clone();
     search.connect_search_changed(move |e| {
         s.borrow_mut().query = e.text().to_string();
@@ -616,6 +632,7 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
         (s.dark, s.webview.clone(), s.window.clone(), doc.title.clone())
     };
     window.set_title(Some(&title));
+    state.borrow().title_label.set_label(&title);
     if let Some(wv) = wv {
         webview::set_zoom(&wv, zoom);
         webview::render(&wv, &text, dark, base.as_deref());
@@ -655,6 +672,7 @@ fn apply_dropped_text(state: &Rc<RefCell<State>>, content: &str, name: &str) {
         (s.dark, s.webview.clone(), s.window.clone())
     };
     window.set_title(Some(&title));
+    state.borrow().title_label.set_label(&title);
     if let Some(wv) = wv {
         webview::set_zoom(&wv, zoom);
         webview::render(&wv, content, dark, None);
