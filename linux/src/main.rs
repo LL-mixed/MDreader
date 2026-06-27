@@ -2,6 +2,7 @@
 // LM1: register embedded GResource + `mdreader://` scheme, open a window rendering shared/render.
 
 mod render;
+mod store;
 
 use gtk::prelude::*;
 use gtk::Application;
