@@ -1,8 +1,8 @@
-# MDreader — Markdown Reader（Android + macOS）
+# MDreader — Markdown Reader（Android + macOS + Linux）
 
 ## 项目目标
 
-跨平台（Android + macOS）的 **Markdown 阅读器**（只读，不做编辑）。核心价值：
+跨平台（Android + macOS + Linux）的 **Markdown 阅读器**（只读，不做编辑）。核心价值：
 
 1. **美观渲染**：把 `.md` 渲染成排版精良、支持代码高亮、表格、数学公式、任务列表、明暗主题的阅读界面。
 2. **系统级文件打开者**：注册为 markdown 文件的默认打开方式之一。在微信、文件管理器、Finder 等处点开 `.md` 时，可选择本 app 打开。
@@ -24,7 +24,12 @@
 | macOS 语言 | Swift | 原生体验最佳；WKWebView 是桌面最强 WebView，能零成本加载同一套 `shared/render` 资源，保住「WebView + 精修 CSS = 美观」的核心路线 |
 | macOS UI | SwiftUI | 声明式、与系统外观融合 |
 | macOS 工程 | Xcode + xcodegen（`project.yml` 声明式） | `.xcodeproj` 为生成物（gitignore）；project.yml 可 diff、可复现，贴合「命令行入口」准则 |
-| 跨端复用 | **monorepo：`android/` + `macos/` + `shared/`** | `shared/render/`（index.html / render.js / CSS / marked / highlight / KaTeX / mermaid）是渲染资源**唯一来源**，两端构建各自打包；纯 Kotlin 工具逻辑（SvgGuard / MermaidFenceNormalizer 等）量小，由 Swift 重写，不跨语言共享 |
+| Linux 语言 | Rust | 类型安全、零成本抽象、单二进制分发；`cargo` 统一 build/test，符合「命令行入口」准则 |
+| Linux UI | GTK4 | Linux 原生工具包，与 GNOME/系统主题（明暗）融合 |
+| Linux 渲染 | **WebKitGTK 6**（webkitgtk-6.0） | 与 macOS WKWebView **同属 WebKit**，共享 `window.webkit.messageHandlers` 桥接 API，JS 桥近乎逐字复刻；Linux 桌面原生 WebView |
+| Linux 缓存 | SQLite（rusqlite，bundled） | 关系型查询/观察最合适（对应 Android Room / macOS SwiftData）；bundled 省运行时依赖 |
+| Linux 工程 | `cargo` + `build.rs`（GResource 内嵌 `shared/render`） | 原生构建工具、可复现；对齐 gradle/xcodegen 取向 |
+| 跨端复用 | **monorepo：`android/` + `macos/` + `linux/` + `shared/`** | `shared/render/`（index.html / render.js / CSS / marked / highlight / KaTeX / mermaid）是渲染资源**唯一来源**，三端构建各自打包；纯工具逻辑（SvgGuard / MermaidFenceNormalizer / ContentHash / DateBuckets 等）各端重写，不跨语言共享 |
 
 > 这些决策是默认方案，若有更好的第一性路径直接提出来改文档、再改实践。
 
@@ -62,6 +67,13 @@ MDreader/
 │   │   ├── ContentView.swift      # 主窗口
 │   │   └── render/                # WKWebView 渲染 + Swift 版工具逻辑
 │   └── Tests/                     # XCTest 单元测试
+├── linux/                         # Linux 工程（cargo + GTK4 + WebKitGTK6）
+│   ├── Cargo.toml                 # cargo = build + test 入口
+│   ├── build.rs                   # 编译 render.gresource.xml 内嵌 ../shared/render
+│   ├── resources/                 # render.gresource.xml、icons
+│   ├── data/                      # .desktop、appdata.xml
+│   └── src/                       # Rust 源码（main / app / render / store / ui）
+│       └── render/                # WebKitWebView 渲染 + Rust 版工具逻辑
 ├── shared/                        # 跨端 common，渲染资源唯一来源
 │   ├── render/                    # index.html / render.js / render.css / marked / highlight / KaTeX / mermaid
 │   └── sample.md                  # 内置样例文档
@@ -69,7 +81,7 @@ MDreader/
 └── tools/                         # 辅助脚本
 ```
 
-> Android 经 `app/build.gradle.kts` 的 `assets.srcDir` 把 `shared/` 作为 assets 根（→ APK 内 `assets/render/*`、`assets/sample.md`）；macOS 经 `project.yml` 的 folder reference 引 `../shared`（→ bundle 内 `Resources/shared/*`）。两端各自处理自己的 bundle 路径，`shared/` 是物理唯一来源。
+> Android 经 `app/build.gradle.kts` 的 `assets.srcDir` 把 `shared/` 作为 assets 根（→ APK 内 `assets/render/*`、`assets/sample.md`）；macOS 经 `project.yml` 的 folder reference 引 `../shared`（→ bundle 内 `Resources/shared/*`）；Linux 经 `build.rs` 遍历 `../shared/render` 编进 GResource，由 `mdreader://` 自定义 scheme 同源加载（WebKitGTK 不支持 `resource://` 加载 web 内容，故自定义 scheme 等价于 macOS bundle / Android asset）。三端各自处理自己的 bundle 路径，`shared/` 是物理唯一来源。
 
 命名约定：包 `com.mdreader`；类名 PascalCase；资源 snake_case；代码与变量英文，注释/文档/commit message 之外的面向用户文本中文。
 
@@ -91,6 +103,13 @@ MDreader/
 xcodegen generate
 xcodebuild -project MDreader.xcodeproj -scheme MDreader -configuration Debug -destination 'platform=macOS' build
 xcodebuild -project MDreader.xcodeproj -scheme MDreader -destination 'platform=macOS' test
+```
+
+**Linux**（在 `linux/` 下，需 `libgtk-4-dev` + `libwebkitgtk-6.0-dev`，Rust ≥ 1.74）：
+```
+cargo build --release          # 出二进制 mdreader
+cargo test                     # 纯逻辑单测（hash / fence / svg / mermaid / cache …）
+cargo run -- path/to/file.md   # CLI 入口：打开 .md
 ```
 
 ## 增量交付里程碑
@@ -116,6 +135,15 @@ xcodebuild -project MDreader.xcodeproj -scheme MDreader -destination 'platform=m
 **大纲（Outline）**：sidebar 顶部「库/大纲」切换；大纲数据来自 render.js 的 DOM 标题（`indexHeadings`/`onActiveHeading`/`scrollToHeading`，与 Android 共享零改动），点击跳转 + 滚动高亮当前标题（对应 Android `OutlineDrawer`）。
 
 **缩放（Zoom）**：工具栏 −/百分比/+/重置 + 快捷键 ⌘+/⌘−/⌘0；WKWebView `pageZoom` 缩放正文，outline 字体同步缩放（30%–300%）。
+
+### Linux 里程碑（Rust + GTK4 + WebKitGTK6，复用 shared/render）
+
+1. **LM1 脚手架**：cargo 工程、空 GTK4 窗口 + WebKitGTK6、`build.rs` 把 `../shared/render` 编进 GResource，`mdreader://` 自定义 scheme 同源加载；`cargo build` 出二进制。✅（已验证：sample.md 经 marked + highlight + KaTeX + Mermaid + inline-SVG + 表格 + 任务列表完整渲染）
+2. **LM2 渲染内核**：`mdreaderNative` 桥（复刻 macOS bridgeScript）+ payload；明暗主题。移植纯逻辑 + 单测对齐 macOS：`content_hash`（SHA-256 向量）/ `svg_guard` / `mermaid_fence` / `fence`。
+3. **LM3 文件打开者**：`GApplication::open` 处理 `.md` 参数；`.desktop` `MimeType=text/markdown;` + `xdg-mime`；窗口 `GtkDropTarget` + webview drop script。
+4. **LM4 缓存层**：rusqlite 元数据 + `$XDG_DATA_HOME/MDreader/docs/<uuid>.md` 正文 + SHA-256 去重（对应 macOS `CachedDoc`/`DocRepository`）；移植 + 单测。
+5. **LM5 内容管理**：`GtkOverlaySplitView` sidebar（库/大纲切换）+ 日期分组列表 + 搜索 + 收藏/删除/刷新；大纲 + 缩放（对应 macOS `LibraryView`/`OutlineView`/Zoom）。
+6. **LM6 图标与发布**：图标、`.desktop`、appdata、release 二进制；外部编辑器（xdg-open/配置命令）、PDF 导出（`WebKitPrintOperation`）、关于窗口。
 
 ## 编码约定
 
