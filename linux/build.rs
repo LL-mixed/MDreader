@@ -25,6 +25,10 @@ fn main() {
     if shared.join("sample.md").exists() {
         entries.push("sample.md".to_string());
     }
+    // App icon(s): bundled under an icon-theme layout (icons/<size>/apps/<id>.png) so they
+    // resolve from the gresource via IconTheme::add_resource_path without a system install.
+    let resources_dir = manifest.join("resources");
+    walk(&resources_dir, &resources_dir, &mut entries);
     entries.sort();
 
     let mut xml = String::new();
@@ -41,14 +45,48 @@ fn main() {
     fs::write(&xml_path, &xml).unwrap();
 
     glib_build_tools::compile_resources(
-        &[shared.to_str().unwrap()],
+        &[shared.to_str().unwrap(), resources_dir.to_str().unwrap()],
         xml_path.to_str().unwrap(),
         "render.gresource",
     );
 
+    // Build metadata (mirrors macOS BuildInfo.swift + project.yml preBuildScript). Consumed by
+    // src/build_info.rs via option_env!.
+    println!("cargo:rustc-env=GIT_HASH={}", git_short());
+    println!("cargo:rustc-env=BUILD_TIME={}", build_time());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("..").join(".git").join("HEAD").display()
+    );
+
     println!("cargo:rerun-if-changed={}", shared.join("render").display());
     println!("cargo:rerun-if-changed={}", shared.join("sample.md").display());
+    println!("cargo:rerun-if-changed={}", resources_dir.display());
     println!("cargo:rerun-if-changed=build.rs");
+}
+
+/// Short git hash of HEAD ("dev" if git is unavailable).
+fn git_short() -> String {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "dev".to_string())
+}
+
+/// UTC build timestamp ("dev" if `date` is unavailable).
+fn build_time() -> String {
+    std::process::Command::new("date")
+        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "dev".to_string())
 }
 
 fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {

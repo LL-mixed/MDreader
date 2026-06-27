@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.mdreader.MDreader</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>MDreader</name>
+  <summary>Beautiful Markdown reader</summary>
+  <summary xml:lang="zh_CN">美观的 Markdown 阅读器</summary>
+  <description>
+    <p>MDreader renders Markdown into a beautifully typeset reading view with syntax
+    highlighting, tables, math (KaTeX), Mermaid diagrams, task lists, and light/dark themes.
+    Register it as a system handler for <code>.md</code> files and keep an auto-cached,
+    searchable, date-grouped library of everything you've opened.</p>
+    <p>This is the native Linux build (GTK4 + WebKitGTK6), at feature parity with the macOS app.</p>
+  </description>
+  <launchable type="desktop-id">com.mdreader.MDreader.desktop</launchable>
+  <provides>
+    <mediatype>text/markdown</mediatype>
+    <mediatype>text/x-markdown</mediatype>
+    <mediatype>application/markdown</mediatype>
+  </provides>
+  <recommends>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </recommends>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-06-27">
+      <description>
+        <p>Initial Linux release: GTK4 + WebKitGTK6 port — render core, file opener, cache
+        layer, content management (library/outline/zoom), PDF export, external editor, and
+        About/preferences.</p>
+      </description>
+    </release>
+  </releases>
+</component>

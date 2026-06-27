@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "MDreader — native Linux Markdown reader (GTK4 + WebKitGTK)"
 license = "MIT"
+authors = ["Liang Li"]
 
 [[bin]]
 name = "mdreader"
