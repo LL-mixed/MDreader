@@ -43,6 +43,7 @@ fn main() {
     std::env::set_var("EGL_LOG_LEVEL", "fatal");
 
     gio::resources_register_include!("render.gresource").expect("failed to register gresource");
+    install_icons();
     render::webview::register_scheme();
 
     let ctx = Arc::new(AppContext {
@@ -138,8 +139,39 @@ fn load_css() {
 /// under an icon-theme layout (icons/<size>/apps/<id>.png); point the default theme at that path
 /// and name it as the default window icon.
 fn register_icon() {
-    gtk::IconTheme::default().add_resource_path("/com/mdreader/MDreader/icons");
+    let theme = gtk::IconTheme::default();
+    // Icons ship under the standard hicolor layout (icons/hicolor/<size>/apps/<id>.png), so the
+    // theme must point at the hicolor dir — not its parent. Pointing at .../icons makes IconTheme
+    // look for .../icons/<size>/apps/... (missing the hicolor/ level), so set_default_icon_name
+    // can't resolve the icon and the GNOME taskbar falls back to a generic one.
+    theme.add_resource_path("/com/mdreader/MDreader/icons/hicolor");
     gtk::Window::set_default_icon_name("com.mdreader.MDreader");
+}
+
+/// Copy the bundled app icons into the user's on-disk icon theme on first launch. GTK4/GNOME
+/// populate the window's _NET_WM_ICON — what the taskbar/dash shows — from the on-disk theme, NOT
+/// from `IconTheme::add_resource_path` (that only touches the in-process theme the compositor
+/// never sees). Without this the GNOME taskbar falls back to a generic icon. Idempotent: each
+/// size is written only when absent, so steady-state launches do no I/O. Run before GTK init so
+/// the theme scan at init picks the icons up.
+fn install_icons() {
+    let base = config::data_home().join("icons").join("hicolor");
+    for size in ["128x128", "256x256", "512x512"] {
+        let res = format!(
+            "/com/mdreader/MDreader/icons/hicolor/{size}/apps/com.mdreader.MDreader.png"
+        );
+        let Ok(bytes) = gio::resources_lookup_data(&res, gio::ResourceLookupFlags::empty()) else {
+            continue;
+        };
+        let dst = base.join(size).join("apps").join("com.mdreader.MDreader.png");
+        if dst.exists() {
+            continue;
+        }
+        if let Some(parent) = dst.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&dst, bytes.as_ref());
+    }
 }
 
 /// App menu (About / Preferences / Quit) with keyboard accelerators. Mirrors macOS's

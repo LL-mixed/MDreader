@@ -71,7 +71,8 @@ MDreader/
 │   ├── Cargo.toml                 # cargo = build + test 入口
 │   ├── build.rs                   # 编译 render.gresource.xml 内嵌 ../shared/render
 │   ├── resources/                 # render.gresource.xml、icons
-│   ├── data/                      # .desktop、appdata.xml
+│   ├── data/                      # .desktop（StartupWMClass=mdreader）、.metainfo.xml
+│   ├── scripts/install.sh         # 用户级桌面安装：binary + .desktop + icons + metainfo；--set-default 设默认 / --uninstall 卸载
 │   └── src/                       # Rust 源码（main / app / render / store / ui）
 │       └── render/                # WebKitWebView 渲染 + Rust 版工具逻辑
 ├── shared/                        # 跨端 common，渲染资源唯一来源
@@ -110,6 +111,8 @@ xcodebuild -project MDreader.xcodeproj -scheme MDreader -destination 'platform=m
 cargo build --release          # 出二进制 mdreader
 cargo test                     # 纯逻辑单测（hash / fence / svg / mermaid / cache …）
 cargo run -- path/to/file.md   # CLI 入口：打开 .md
+./scripts/install.sh           # 装进 GNOME 应用列表 + 注册为 .md handler（用户级，免 root）
+./scripts/install.sh --set-default   # 同时设为 .md 默认打开方式
 ```
 
 ## 增量交付里程碑
@@ -143,7 +146,7 @@ cargo run -- path/to/file.md   # CLI 入口：打开 .md
 3. **LM3 文件打开者**：`GApplication::open` 处理 `.md` 参数；`.desktop` `MimeType=text/markdown;` + `xdg-mime`；窗口 drop + webview drop script。✅
 4. **LM4 缓存层**：rusqlite 元数据 + `$XDG_DATA_HOME/MDreader/docs/<uuid>.md` 正文 + SHA-256 去重（对应 macOS `CachedDoc`/`DocRepository`）；移植 + 单测。✅
 5. **LM5 内容管理**：`Paned` sidebar（库/大纲 `Stack`+`StackSwitcher` 切换）+ 日期分组列表 + 搜索 + 右键菜单（新窗口/刷新/收藏/删除）；大纲（DOM 标题 + 滚动高亮 + 字体随缩放）+ 缩放（工具栏 −/百分比/+/重置 + Ctrl±0 + Ctrl 滚轮 + 按 content-hash 持久化）；session restore。对应 macOS `LibraryView`/`OutlineView`/Zoom。✅
-6. **LM6 图标与发布**：图标（复用 macOS PNG，打进 GResource + `IconTheme::add_resource_path`，免安装即显示）、`.desktop`、`.metainfo.xml`、release 二进制；外部编辑器（配置命令或 `xdg-open`，**argv 直起不经 shell**）、PDF 导出（`WebKitPrintOperation` 预置 Print to File）、关于窗口（`GtkAboutDialog` + `build.rs` 注入 git hash/build time）、应用菜单（header hamburger `MenuButton`：关于/首选项/退出 + 快捷键）。✅（84 单测全绿；release 8.8M）
+6. **LM6 图标与发布**：图标（复用 macOS PNG，打进 GResource；启动时 lazy extract 到 `$XDG_DATA_HOME/icons/hicolor/<size>/apps/`——GTK4/GNOME 任务栏只读**磁盘** icon theme、不读进程内 `IconTheme::add_resource_path`，必须落盘才会有 `_NET_WM_ICON`/任务栏图标；idempotent 仅首次写）、`.desktop`、`.metainfo.xml`、release 二进制；外部编辑器（配置命令或 `xdg-open`，**argv 直起不经 shell**）、PDF 导出（`WebKitPrintOperation` 预置 Print to File）、关于窗口（`GtkAboutDialog` + `build.rs` 注入 git hash/build time）、应用菜单（header hamburger `MenuButton`：关于/首选项/退出 + 快捷键）。✅（84 单测全绿；release 8.8M）
    - **有意分歧（非缺陷）**：① 不做 macOS `WindowTabber` 标签合并（GNOME 无原生对应，「新窗口打开」即 Linux 等价）；② 外部 http(s) 链接交系统浏览器打开（而非 mac 的 webview 内加载 + 返回按钮，UX 更干净）；③ 编辑器配置为「命令」语义（如 `code`/`typora`/`code -n`）而非 mac 的「应用名 + `open -a`」。
 
 ## 编码约定
