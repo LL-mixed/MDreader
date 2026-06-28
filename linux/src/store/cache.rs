@@ -57,9 +57,13 @@ impl DocRepository {
                 params![hash],
                 |r| r.get::<_, String>(0),
             ) {
+                // Backfill source_uri when this open provides one the cached row lacks
+                // (e.g. first cached via drop as None, now reopened from a file). COALESCE keeps
+                // any existing source when this open has none, so a later drop never wipes a
+                // recorded file path — relative image/SVG refs need the source dir to resolve.
                 let _ = db.execute(
-                    "UPDATE cached_docs SET opened_at = ?1 WHERE id = ?2",
-                    params![now, existing],
+                    "UPDATE cached_docs SET opened_at = ?1, source_uri = COALESCE(?2, source_uri) WHERE id = ?3",
+                    params![now, source_uri, existing],
                 );
                 Uuid::parse_str(&existing).unwrap_or_else(|_| Uuid::new_v4())
             } else {
@@ -274,6 +278,31 @@ mod tests {
         let id2 = repo.cache("Doc Again", "# Hi", None);
         assert_eq!(id1, id2);
         assert_eq!(repo.all().first().unwrap().id, id1);
+    }
+
+    #[test]
+    fn cache_dedup_backfills_missing_source_uri() {
+        // A doc first cached without a source (e.g. dropped text) has source_uri = NULL. When the
+        // same content is later opened from a file, the dedup hit must backfill source_uri —
+        // otherwise relative image/SVG refs can't resolve on session restore (base = None).
+        let (repo, _dir) = make_repo();
+        repo.cache("Doc", "# Hi", None);
+        repo.cache("Doc Again", "# Hi", Some("/path/to/doc.md"));
+        let docs = repo.all();
+        let doc = docs.first().unwrap();
+        assert_eq!(doc.source_uri.as_deref(), Some("/path/to/doc.md"));
+    }
+
+    #[test]
+    fn cache_dedup_keeps_existing_source_uri() {
+        // A file-opened doc (source recorded) later re-cached via drop (no source) must NOT lose
+        // its source_uri.
+        let (repo, _dir) = make_repo();
+        repo.cache("Doc", "# Hi", Some("/real/file.md"));
+        repo.cache("Doc Again", "# Hi", None);
+        let docs = repo.all();
+        let doc = docs.first().unwrap();
+        assert_eq!(doc.source_uri.as_deref(), Some("/real/file.md"));
     }
 
     fn write_source(name: &str, body: &str) -> PathBuf {
