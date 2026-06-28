@@ -9,6 +9,7 @@ Exec=mdreader %U
 Icon=com.mdreader.MDreader
 Terminal=false
 StartupNotify=true
+StartupWMClass=mdreader
 Categories=Office;TextEditor;Viewer;
 MimeType=text/markdown;text/x-markdown;application/markdown;
 Keywords=markdown;md;
