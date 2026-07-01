@@ -1,44 +1,43 @@
 # MDreader
 
-一个 Android 平台的 **Markdown 阅读器**（只读）。把 `.md` 渲染成排版精良的阅读界面，并注册为系统级 markdown 文件打开者——在微信、文件管理器等 app 中点开 `.md` 时可选择本 app 打开，打开的文件会自动缓存到 app 私有空间，可按日期/标题浏览、搜索、收藏、删除。
+只读的 Markdown 阅读器，把 `.md` 文件渲染成排版精良的阅读界面，并注册为系统级 `.md` 文件打开者——在微信、文件管理器、Finder、GNOME 文件等处点开 `.md` 时可选择本应用打开。打开过的文件自动缓存到应用私有空间，可按日期/标题浏览、搜索、收藏、删除。
 
-## 技术栈
+同一套渲染资源（marked + highlight.js + KaTeX + Mermaid + 自研 GitHub 风格 CSS），三个原生壳：
 
-- Kotlin + Jetpack Compose（Material 3，明暗主题 + 动态取色）
-- Markdown 渲染：WebView + 本地 `marked.js` + `highlight.js` + 自研 CSS（GitHub 风格，明暗双主题）
-- 缓存：Room（元数据 + SHA-256 内容去重）+ app 内部存储（正文文件）
-- 构建：Gradle Kotlin DSL + Version Catalog；minSdk 24 / targetSdk 34；AGP 8.5.2 / Gradle 8.7 / Kotlin 1.9.24
+| 平台 | 语言 / UI | WebView | 缓存 |
+| --- | --- | --- | --- |
+| Android | Kotlin / Jetpack Compose | Android WebView | Room + 内部存储 |
+| macOS | Swift / SwiftUI | WKWebView | SwiftData + App Support |
+| Linux | Rust / GTK4 | WebKitGTK 6 | SQLite (rusqlite) + `$XDG_DATA_HOME` |
 
-## 环境要求
+三端共用 `shared/render/`（渲染资源唯一来源），各自打包；纯工具逻辑（哈希、SVG/Mermaid 预处理、日期分桶等）按端重写。
 
-- JDK 17
-- Android SDK（`platform-tools`、`platforms;android-34`、`build-tools;34.0.0`）
-- 在 `local.properties` 里设置 `sdk.dir=<SDK 路径>`
+## 功能
 
-## 常用命令
+- **渲染**：GitHub 风格排版，代码高亮、表格、数学公式、任务列表、Mermaid 图、内联 SVG，明暗主题
+- **文件打开者**：注册 `.md` / `text/markdown`，从外部点开即用本应用阅读
+- **缓存**：打开即落盘，SHA-256 正文去重，元数据入库
+- **内容管理**：按日期分组的列表、标题/正文搜索、详情、收藏、删除
+- **大纲**：从 DOM 标题抽取，点击跳转、滚动高亮当前章节
+- **缩放**：30%–300%，按文件持久化
+
+## Android
 
 ```bash
-# 构建 debug APK
-./gradlew :app:assembleDebug
-
-# 构建签名 release APK（需在 local.properties 配置 mdreader.* 签名凭据，见下）
-./gradlew :app:assembleRelease
-
-# 运行单元测试
-./gradlew :app:testDebugUnitTest
-
-# 安装 debug APK 到已连接设备/模拟器
-./gradlew :app:installDebug
-# 或： adb install -r app/build/outputs/apk/debug/app-debug.apk
-
-# 模拟「从外部打开 markdown」（验证 intent-filter + 缓存）
-adb push README.md /sdcard/README.md
-adb shell am start -a android.intent.action.VIEW -d "file:///sdcard/README.md" -t text/markdown com.mdreader/.MainActivity
+cd android
+./gradlew :app:assembleDebug          # debug APK
+./gradlew :app:testDebugUnitTest      # JVM 单测
+./gradlew :app:installDebug           # 装到已连接设备
 ```
 
-## Release 签名
+要求 JDK 17，`local.properties` 里设 `sdk.dir`。模拟「从外部打开」：
 
-签名凭据放在 `local.properties`（已 gitignore，不进仓库）：
+```bash
+adb shell am start -a android.intent.action.VIEW \
+  -d "file:///sdcard/README.md" -t text/markdown com.mdreader/.MainActivity
+```
+
+Release 签名凭据放 `local.properties`（已 gitignore）：
 
 ```properties
 mdreader.storeFile=<绝对路径>/mdreader.jks
@@ -47,24 +46,42 @@ mdreader.keyAlias=mdreader
 mdreader.keyPassword=<密码>
 ```
 
-用 keytool 生成一个开发用 keystore：
+## macOS
 
 ```bash
-keytool -genkeypair -keystore keystore/mdreader.jks -alias mdreader \
-  -keyalg RSA -keysize 2048 -validity 10000
+cd macos
+xcodegen generate
+xcodebuild -project MDreader.xcodeproj -scheme MDreader \
+  -configuration Debug -destination 'platform=macOS' build
+xcodebuild -project MDreader.xcodeproj -scheme MDreader \
+  -destination 'platform=macOS' test
 ```
 
-未配置时 release 构建产出未签名 APK，仍可成功构建。
+需要 `brew install xcodegen`，最低 macOS 14。`.md` UTI 在 `Info.plist` 声明，Finder「打开方式」、双击、拖拽均可。
 
-## 应用图标
-
-图标由 `tools/gen_icon.py` 用 Pillow 生成（蓝渐变底 + 文档卡片 + markdown `#`），全 5 密度 + round 变体：
+## Linux
 
 ```bash
-pip3 install --user Pillow
-python3 tools/gen_icon.py
+cd linux
+cargo build --release          # 出二进制 mdreader
+cargo test                     # 纯逻辑单测
+cargo run -- path/to/file.md   # CLI 打开 .md
+./scripts/install.sh           # 用户级安装：binary + .desktop + 图标 + metainfo
+./scripts/install.sh --set-default   # 同时设为 .md 默认打开方式
 ```
+
+依赖 `libgtk-4-dev` 与 `libwebkitgtk-6.0-dev`，Rust ≥ 1.74。`.desktop` 已声明 `MimeType=text/markdown;`，外部 http(s) 链接交系统浏览器，编辑器可配置（`code` / `typora` 等命令，argv 直起不经 shell）。
 
 ## 目录结构
 
-见 [CLAUDE.md](CLAUDE.md)。
+```
+MDreader/
+├── android/    # Gradle 工程（独立根）
+├── macos/      # xcodegen 工程（project.yml 为唯一来源）
+├── linux/      # cargo + GTK4 + WebKitGTK6
+├── shared/     # 跨端渲染资源（render/ + sample.md）
+├── tools/      # 辅助脚本（图标生成等）
+└── docs/       # 设计文档
+```
+
+详细约定见 [CLAUDE.md](CLAUDE.md)。
