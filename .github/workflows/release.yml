@@ -1,0 +1,136 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号，例如 v1.0.1'
+        required: true
+        type: string
+      draft:
+        description: '作为草稿发布'
+        required: true
+        type: boolean
+        default: false
+
+# release 需要写权限创建 tag/release，否则 GITHUB_TOKEN 默认只读会 403
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 安装 GTK4 + WebKitGTK6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 单元测试
+        run: cargo test --manifest-path linux/Cargo.toml
+
+      - name: 构建 release 二进制
+        run: cargo build --release --manifest-path linux/Cargo.toml
+
+      - name: 打包
+        run: tar -czf mdreader-linux-amd64.tar.gz -C linux/target/release mdreader
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mdreader-linux
+          path: mdreader-linux-amd64.tar.gz
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 安装 xcodegen
+        run: brew install xcodegen
+
+      - name: 生成 Xcode 工程
+        run: xcodegen generate
+        working-directory: macos
+
+      - name: 构建 Release .app
+        run: |
+          xcodebuild -project MDreader.xcodeproj -scheme MDreader \
+            -configuration Release -destination 'platform=macOS' \
+            -derivedDataPath build build
+        working-directory: macos
+
+      - name: 打包 .app
+        run: |
+          cd macos/build/Build/Products/Release
+          ditto -c -k --keepParent MDreader.app "$GITHUB_WORKSPACE/mdreader-macos.zip"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mdreader-macos
+          path: mdreader-macos.zip
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # CI 生成临时 debug keystore 签 release，产出可安装 APK（非上架用）。
+      # 正式发布请用 secrets 注入正式签名。
+      - name: 配置 SDK 路径与签名
+        run: |
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/local.properties
+          keytool -genkeypair -keystore "$HOME/mdreader.jks" \
+            -alias mdreader -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=MDreader, O=MDreader, C=US"
+          {
+            printf 'mdreader.storeFile=%s\n' "$HOME/mdreader.jks"
+            printf 'mdreader.storePassword=android\n'
+            printf 'mdreader.keyAlias=mdreader\n'
+            printf 'mdreader.keyPassword=android\n'
+          } >> android/local.properties
+
+      - name: 单元测试
+        run: ./gradlew :app:testDebugUnitTest
+        working-directory: android
+
+      - name: 构建 release APK
+        run: ./gradlew :app:assembleRelease
+        working-directory: android
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mdreader-android
+          path: android/app/build/outputs/apk/release/*.apk
+
+  release:
+    needs: [build-linux, build-macos, build-android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: artifacts
+
+      - name: 创建 Release 并上传产物
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: Release ${{ inputs.version }}
+          draft: ${{ inputs.draft }}
+          files: |
+            artifacts/mdreader-linux/*
+            artifacts/mdreader-macos/*
+            artifacts/mdreader-android/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
