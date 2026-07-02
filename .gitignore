@@ -25,3 +25,6 @@ macos/MDreader/Info.plist
 macos/MDreader/build-info.json
 **/xcuserdata/
 **/DerivedData/
+
+# --- Windows (windows/) ---
+# bin/obj/publish/*.user/.vs 已由 windows/.gitignore 管理

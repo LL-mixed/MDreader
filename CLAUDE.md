@@ -29,7 +29,11 @@
 | Linux 渲染 | **WebKitGTK 6**（webkitgtk-6.0） | 与 macOS WKWebView **同属 WebKit**，共享 `window.webkit.messageHandlers` 桥接 API，JS 桥近乎逐字复刻；Linux 桌面原生 WebView |
 | Linux 缓存 | SQLite（rusqlite，bundled） | 关系型查询/观察最合适（对应 Android Room / macOS SwiftData）；bundled 省运行时依赖 |
 | Linux 工程 | `cargo` + `build.rs`（GResource 内嵌 `shared/render`） | 原生构建工具、可复现；对齐 gradle/xcodegen 取向 |
-| 跨端复用 | **monorepo：`android/` + `macos/` + `linux/` + `shared/`** | `shared/render/`（index.html / render.js / CSS / marked / highlight / KaTeX / mermaid）是渲染资源**唯一来源**，三端构建各自打包；纯工具逻辑（SvgGuard / MermaidFenceNormalizer / ContentHash / DateBuckets 等）各端重写，不跨语言共享 |
+| Windows 语言/UI | C# / WinUI 3（Windows App SDK，.NET 8 LTS） | Windows 最原生栈；延续「每端选该平台最强原生栈」（对应 macOS=SwiftUI、Linux=GTK4）；控件齐全，符合「美观是最高准则」 |
+| Windows WebView | **WebView2**（Edge Chromium，Win10 1809+ 预装 runtime） | 微软官方桌面 WebView 事实标准；与 WKWebView / WebKitGTK 并列，各端原生 WebView |
+| Windows 缓存 | `Microsoft.Data.Sqlite` + 手写 SQL（对应 rusqlite） | 正文落 `%LOCALAPPDATA%\MDreader\docs\<uuid>.md` + SHA-256 去重 |
+| Windows 工程 | `.sln` + `csproj`（SDK-style，unpackaged）；便携 zip（self-contained） | `dotnet build/test/publish` 统一命令行入口；解压即用、免签名，对齐 Linux `install.sh` 模式 |
+| 跨端复用 | **monorepo：`android/` + `macos/` + `linux/` + `windows/` + `shared/`** | `shared/render/`（index.html / render.js / CSS / marked / highlight / KaTeX / mermaid）是渲染资源**唯一来源**，四端构建各自打包；纯工具逻辑（SvgGuard / MermaidFenceNormalizer / ContentHash / DateBuckets 等）各端重写，不跨语言共享 |
 
 > 这些决策是默认方案，若有更好的第一性路径直接提出来改文档、再改实践。
 
@@ -75,6 +79,15 @@ MDreader/
 │   ├── scripts/install.sh         # 用户级桌面安装：binary + .desktop + icons + metainfo；--set-default 设默认 / --uninstall 卸载
 │   └── src/                       # Rust 源码（main / app / render / store / ui）
 │       └── render/                # WebKitWebView 渲染 + Rust 版工具逻辑
+├── windows/                       # Windows 工程（dotnet + WinUI 3 + WebView2）
+│   ├── MDreader.sln
+│   ├── MDreader/                  # C# 源码（App / MainWindow / LibraryModel）
+│   │   ├── MDreader.csproj        # unpackaged；shared/render 作 render/ Content 复制
+│   │   ├── Render/                # WebView2 + BridgeShim（mdreaderNative）+ Payload + Preprocess + Outline
+│   │   ├── Store/                 # DocRepository(Sqlite) / DocStore / Session/Zoom/Settings
+│   │   └── Util/                  # ContentHash / SvgGuard / MermaidFence / Fence / Titles / DateBuckets
+│   ├── MDreader.Tests/            # xUnit 单测（向量对齐 Rust/Swift）
+│   └── scripts/                   # install.ps1（注册 .md ProgId）/ build.ps1（self-contained zip）
 ├── shared/                        # 跨端 common，渲染资源唯一来源
 │   ├── render/                    # index.html / render.js / render.css / marked / highlight / KaTeX / mermaid
 │   └── sample.md                  # 内置样例文档
@@ -115,6 +128,16 @@ cargo run -- path/to/file.md   # CLI 入口：打开 .md
 ./scripts/install.sh --set-default   # 同时设为 .md 默认打开方式
 ```
 
+**Windows**（在 `windows/` 下，需 .NET 8 SDK，最低 Win10 1809）：
+```
+dotnet build MDreader.sln -c Release          # 构建
+dotnet test MDreader.sln                       # xUnit 单测（向量对齐 Rust/Swift）
+.\scripts\build.ps1                            # 出 self-contained 便携 zip（解压即用）
+.\scripts\install.ps1                          # 用户级安装：解压 + 注册 .md ProgId（HKCU，免管理员）
+.\scripts\install.ps1 -SetDefault              # 注册后引导系统设置选默认（UserChoice 限制，无法静默）
+```
+Windows 端本地 macOS/Linux 无法 build（WinUI 3/WebView2 仅 Windows），验证走 `.github/workflows/windows-ci.yml`（push 触发 `dotnet build` + `dotnet test`）。
+
 ## 增量交付里程碑
 
 每个里程碑：实现 → build 通过 → 测试通过 → git 提交 → 继续。
@@ -148,6 +171,17 @@ cargo run -- path/to/file.md   # CLI 入口：打开 .md
 5. **LM5 内容管理**：`Paned` sidebar（库/大纲 `Stack`+`StackSwitcher` 切换）+ 日期分组列表 + 搜索 + 右键菜单（新窗口/刷新/收藏/删除）；大纲（DOM 标题 + 滚动高亮 + 字体随缩放）+ 缩放（工具栏 −/百分比/+/重置 + Ctrl±0 + Ctrl 滚轮 + 按 content-hash 持久化）；session restore。对应 macOS `LibraryView`/`OutlineView`/Zoom。✅
 6. **LM6 图标与发布**：图标（复用 macOS PNG，打进 GResource；启动时 lazy extract 到 `$XDG_DATA_HOME/icons/hicolor/<size>/apps/`——GTK4/GNOME 任务栏只读**磁盘** icon theme、不读进程内 `IconTheme::add_resource_path`，必须落盘才会有 `_NET_WM_ICON`/任务栏图标；idempotent 仅首次写）、`.desktop`、`.metainfo.xml`、release 二进制；外部编辑器（配置命令或 `xdg-open`，**argv 直起不经 shell**）、PDF 导出（`WebKitPrintOperation` 预置 Print to File）、关于窗口（`GtkAboutDialog` + `build.rs` 注入 git hash/build time）、应用菜单（header hamburger `MenuButton`：关于/首选项/退出 + 快捷键）。✅（84 单测全绿；release 8.8M）
    - **有意分歧（非缺陷）**：① 不做 macOS `WindowTabber` 标签合并（GNOME 无原生对应，「新窗口打开」即 Linux 等价）；② 外部 http(s) 链接交系统浏览器打开（而非 mac 的 webview 内加载 + 返回按钮，UX 更干净）；③ 编辑器配置为「命令」语义（如 `code`/`typora`/`code -n`）而非 mac 的「应用名 + `open -a`」。
+
+### Windows 里程碑（C# + WinUI 3 + WebView2，复用 shared/render）
+
+1. **WM1 脚手架**：`.sln` + `csproj`（unpackaged WinUI 3）+ `App`/`MainWindow` + WebView2 + `SetVirtualHostNameToFolderMapping("app.local", ...)` 加载 `shared/render` + `mdreaderNative` shim 骨架。
+2. **WM2 渲染内核**：完整桥（`AddScriptToExecuteOnDocumentCreated` shim + `WebMessageReceived` + `ExecuteScriptAsync`）+ payload 预处理；移植纯逻辑 + xUnit 向量对齐：`ContentHash`/`SvgGuard`/`MermaidFenceNormalizer`/`Fence`/`Preprocess`。
+3. **WM3 文件打开者**：`Environment.GetCommandLineArgs` 处理 `.md` 参数（unpackaged 双击/`MDreader.exe file.md`）；`install.ps1` 注册 `.md` ProgId（HKCU）；页面内 drop script（`postMessage` dropFile）。
+4. **WM4 缓存层**：`Microsoft.Data.Sqlite` 元数据 + `%LOCALAPPDATA%\MDreader\docs\<uuid>.md` 正文 + SHA-256 去重；移植 `DocRepository`/`DocStore` + 单测。
+5. **WM5 内容管理**：split sidebar（库/大纲切换）+ `CollectionViewSource` 日期分组列表 + 搜索 + 右键 `MenuFlyout`（收藏/从源刷新/新窗口/删除）+ 大纲（DOM 标题 + 点击跳转）+ 缩放（工具栏 + Ctrl±0 + 按 content-hash 持久化）+ session restore。
+6. **WM6 发布**：`build.ps1`（self-contained zip）+ `install.ps1`/`-SetDefault`/`-Uninstall` + 外部编辑器（`Process.Start`，argv 直起）+ PDF 导出（`PrintToPdfAsync`）+ 关于（`ContentDialog`）+ `release.yml` 加 `build-windows` job。
+   - **有意分歧（非缺陷）**：① 默认应用 `--set-default` 无法静默（Win10/11 `UserChoice` hash 保护），仅注册 ProgId + 引导用户在系统设置确认；② 外部链接交默认浏览器（对齐 Linux）；③ 发布为便携 zip（self-contained），非 MSIX（免签名，对齐 Linux `install.sh`）。
+   - 状态：代码完成，待 push + Windows CI 验证 build/test（本地 macOS 无法 build WinUI 3）。
 
 ## 编码约定
 

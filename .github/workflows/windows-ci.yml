@@ -1,0 +1,33 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'windows/**'
+      - 'shared/**'
+      - '.github/workflows/windows-ci.yml'
+  pull_request:
+    paths:
+      - 'windows/**'
+      - 'shared/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore windows/MDreader.sln
+
+      - name: Build (Release)
+        run: dotnet build windows/MDreader.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test windows/MDreader.sln -c Release --no-build

@@ -2,15 +2,16 @@
 
 只读的 Markdown 阅读器，把 `.md` 文件渲染成排版精良的阅读界面，并注册为系统级 `.md` 文件打开者——在微信、文件管理器、Finder、GNOME 文件等处点开 `.md` 时可选择本应用打开。打开过的文件自动缓存到应用私有空间，可按日期/标题浏览、搜索、收藏、删除。
 
-同一套渲染资源（marked + highlight.js + KaTeX + Mermaid + 自研 GitHub 风格 CSS），三个原生壳：
+同一套渲染资源（marked + highlight.js + KaTeX + Mermaid + 自研 GitHub 风格 CSS），四个原生壳：
 
 | 平台 | 语言 / UI | WebView | 缓存 |
 | --- | --- | --- | --- |
 | Android | Kotlin / Jetpack Compose | Android WebView | Room + 内部存储 |
 | macOS | Swift / SwiftUI | WKWebView | SwiftData + App Support |
 | Linux | Rust / GTK4 | WebKitGTK 6 | SQLite (rusqlite) + `$XDG_DATA_HOME` |
+| Windows | C# / WinUI 3 | WebView2 | SQLite + `%LOCALAPPDATA%` |
 
-三端共用 `shared/render/`（渲染资源唯一来源），各自打包；纯工具逻辑（哈希、SVG/Mermaid 预处理、日期分桶等）按端重写。
+四端共用 `shared/render/`（渲染资源唯一来源），各自打包；纯工具逻辑（哈希、SVG/Mermaid 预处理、日期分桶等）按端重写。
 
 ## 功能
 
@@ -72,6 +73,19 @@ cargo run -- path/to/file.md   # CLI 打开 .md
 
 依赖 `libgtk-4-dev` 与 `libwebkitgtk-6.0-dev`，Rust ≥ 1.74。`.desktop` 已声明 `MimeType=text/markdown;`，外部 http(s) 链接交系统浏览器，编辑器可配置（`code` / `typora` 等命令，argv 直起不经 shell）。
 
+## Windows
+
+```powershell
+cd windows
+dotnet build MDreader.sln -c Release          # 构建
+dotnet test MDreader.sln                       # xUnit 单测
+.\scripts\build.ps1                            # 出 self-contained 便携 zip
+.\scripts\install.ps1                          # 用户级安装：解压 + 注册 .md 关联
+.\scripts\install.ps1 -SetDefault              # 注册后引导系统设置选默认
+```
+
+需 .NET 8 SDK，最低 Win10 1809（WebView2 运行时 Win10/11 预装）。便携 zip 解压即用、免装 runtime、免签名。编辑器可配置（`code` / `typora` 等命令，argv 直起不经 shell）；外部链接交默认浏览器。
+
 ## 目录结构
 
 ```
@@ -79,6 +93,7 @@ MDreader/
 ├── android/    # Gradle 工程（独立根）
 ├── macos/      # xcodegen 工程（project.yml 为唯一来源）
 ├── linux/      # cargo + GTK4 + WebKitGTK6
+├── windows/    # dotnet + WinUI 3 + WebView2
 ├── shared/     # 跨端渲染资源（render/ + sample.md）
 ├── tools/      # 辅助脚本（图标生成等）
 └── docs/       # 设计文档

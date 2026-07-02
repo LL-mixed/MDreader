@@ -114,8 +114,31 @@ jobs:
           name: mdreader-android
           path: android/app/build/outputs/apk/release/*.apk
 
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 单元测试
+        run: dotnet test windows/MDreader.sln -c Release
+
+      - name: 发布 self-contained 便携版
+        run: dotnet publish windows/MDreader/MDreader.csproj -c Release -r win-x64 --self-contained true -o publish
+
+      - name: 压缩 zip
+        run: Compress-Archive -Path publish/* -DestinationPath mdreader-windows-x64.zip
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mdreader-windows
+          path: mdreader-windows-x64.zip
+
   release:
-    needs: [build-linux, build-macos, build-android]
+    needs: [build-linux, build-macos, build-android, build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v5
@@ -132,5 +155,6 @@ jobs:
             artifacts/mdreader-linux/*
             artifacts/mdreader-macos/*
             artifacts/mdreader-android/*
+            artifacts/mdreader-windows/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

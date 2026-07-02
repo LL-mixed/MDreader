@@ -1,0 +1,14 @@
+## Build output
+bin/
+obj/
+publish/
+
+## Visual Studio / Rider / VS Code
+*.user
+*.suo
+*.userprefs
+.vs/
+.idea/
+
+## Self-contained publish artifacts
+*.zip
