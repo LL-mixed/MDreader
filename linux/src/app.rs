@@ -339,12 +339,15 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
         }
     }
     window.present();
-    // Apply the persisted global theme to chrome on idle, AFTER present, so the notify chain
-    // (prefer-dark -> reapply -> render) can't delay or block the window from mapping on startup.
+    // Sync chrome to the active doc's dark flag on idle (after present, so the notify chain
+    // can't block the window from mapping). This is the per-doc resolved value, NOT the global
+    // pref — a doc pinned Light under a Dark default must still paint chrome Light to match its
+    // body, or the sidebar/outline ends up Dark while the body is Light.
     {
         let s = state.clone();
         let _ = glib::source::idle_add_local_once(move || {
-            apply_global_theme_pref(s.borrow().ctx.settings.lock().unwrap().theme_pref());
+            let dark = s.borrow().dark;
+            apply_dark(&s, dark);
         });
     }
 }
@@ -864,23 +867,24 @@ pub fn apply_global_theme_pref(pref: ThemePref) {
     }
 }
 
-/// Set the current window's dark flag AND mirror it into GTK's chrome, so the title bar/sidebar
-/// stays in sync with the rendered document (a pinned doc recolors the whole window, not just the
-/// WebView body). Skips the chrome write when the value is unchanged — this breaks any notify
-/// feedback loop on `gtk-application-prefer-dark-theme` (a set that fires notify → reapply → set).
+/// Set the window's dark flag AND sync GTK's chrome to it. The guard reads the *live*
+/// `gtk-application-prefer-dark-theme` (not s.dark) so an external write that moved the chrome
+/// (prefs dropdown / OS scheme) is pulled back to the doc's dark flag, while no-op sets don't
+/// spam notify. This is what keeps the sidebar/outline (which follows chrome) aligned with the
+/// rendered body (which follows s.dark), including pinned docs under a different global default.
 fn apply_dark(state: &Rc<RefCell<State>>, dark: bool) {
-    let prev = state.borrow().dark;
     state.borrow_mut().dark = dark;
-    if prev == dark {
-        return;
-    }
     if let Some(settings) = gtk::Settings::default() {
-        settings.set_gtk_application_prefer_dark_theme(dark);
+        if settings.is_gtk_application_prefer_dark_theme() != dark {
+            settings.set_gtk_application_prefer_dark_theme(dark);
+        }
     }
 }
 
-/// When the global pref or the OS scheme changes, docs WITHOUT a per-doc override must follow;
-/// docs WITH an override keep their sticky theme. Cheap no-op when the resolved value is unchanged.
+/// Re-resolve this window's theme after a global-pref or OS-scheme change. The chrome is always
+/// (re)glued to the resolved dark — a pinned doc keeps its body theme, but an external prefer-dark
+/// write (prefs dropdown / OS) may have moved its chrome and must be pulled back. Unpinned docs
+/// additionally re-render when the resolved value actually changes.
 fn reapply_theme_if_unpinned(state: &Rc<RefCell<State>>) {
     let pinned = {
         let s = state.borrow();
@@ -888,16 +892,12 @@ fn reapply_theme_if_unpinned(state: &Rc<RefCell<State>>) {
         let pinned = s.ctx.theme_store.lock().unwrap().dark_for(&hash);
         pinned
     };
-    if pinned.is_some() {
-        return;
-    }
     let new_dark = compute_dark(state);
-    // Guard: skip when the resolved dark equals the value already applied. This terminates the
-    // notify feedback loop deterministically even if prefer-dark's notify fires on no-op sets.
-    if state.borrow().dark == new_dark {
+    let prev_dark = state.borrow().dark;
+    apply_dark(state, new_dark);
+    if pinned.is_some() || prev_dark == new_dark {
         return;
     }
-    apply_dark(state, new_dark);
     let (md, base, wv) = {
         let s = state.borrow();
         (s.markdown.clone(), s.base_dir.clone(), s.webview.clone())
