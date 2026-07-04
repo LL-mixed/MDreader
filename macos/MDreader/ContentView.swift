@@ -5,8 +5,10 @@ struct ContentView: View {
     let initialDocID: UUID?
     @Environment(\.mdRepository) private var repository
     @Environment(\.mdZoomStore) private var zoomStore
+    @Environment(\.mdThemeStore) private var themeStore
     @Environment(\.mdSessionStore) private var sessionStore
     @EnvironmentObject private var settingsStore: SettingsStore
+    @Environment(\.colorScheme) private var systemColorScheme
     @StateObject private var model = ReaderModel()
 
     var body: some View {
@@ -70,19 +72,23 @@ struct ContentView: View {
 
                     Divider()
 
-                    Button { model.isDark.toggle() } label: {
+                    Button { model.toggleTheme() } label: {
                         Label(model.isDark ? "浅色" : "深色", systemImage: model.isDark ? "sun.max" : "moon")
                     }
                 }
             }
         }
+        // Chrome tracks the rendered doc's dark flag (model.isDark), so the window chrome stays in
+        // sync with the body — pinned docs recolor the whole window, not just the WebView.
         .preferredColorScheme(model.isDark ? .dark : .light)
         .environmentObject(model)
         .onAppear {
             model.repository = repository
             model.zoomStore = zoomStore
+            model.themeStore = themeStore
             model.sessionStore = sessionStore
             model.settings = settingsStore
+            model.systemDark = (systemColorScheme == .dark)
             model.refreshDocs()
             if let id = initialDocID, let doc = model.docs.first(where: { $0.id == id }) {
                 model.openCached(doc)
@@ -90,6 +96,12 @@ struct ContentView: View {
                 model.restoreLastDoc()
             }
             configureTabbing()
+        }
+        .onChange(of: systemColorScheme) { _, newScheme in
+            model.setSystemDark(newScheme == .dark)
+        }
+        .onChange(of: settingsStore.settings.themePref) { _, _ in
+            model.reapplyThemeIfUnpinned()
         }
         .onOpenURL { url in model.open(url) }
     }
