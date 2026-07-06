@@ -27,4 +27,17 @@
     <string name="back">返回</string>
     <string name="loading">加载中…</string>
     <string name="outline_title">目录</string>
+    <string name="action_toggle_theme">切换主题</string>
+    <string name="action_settings">设置</string>
+    <string name="action_refresh_source">从原文件刷新</string>
+
+    <!-- Settings -->
+    <string name="settings_default_theme">默认主题</string>
+    <string name="settings_theme_hint">未单独切换主题的文档使用此设置；已单独切换的文档保留各自选择。</string>
+    <string name="theme_follow_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+    <string name="settings_editor">外部编辑器</string>
+    <string name="settings_editor_placeholder">即将支持</string>
+    <string name="settings_editor_hint">预留设置项，后续版本支持调用外部编辑器。</string>
 </resources>

@@ -1,6 +1,7 @@
 package com.mdreader.data
 
 import android.content.Context
+import android.net.Uri
 import com.mdreader.data.db.CachedDocDao
 import com.mdreader.data.db.CachedDocEntity
 import com.mdreader.util.ContentHash
@@ -45,6 +46,30 @@ class DocRepository(
         val entity = dao.getById(id) ?: return null
         dao.touchOpenedAt(id, now())
         return entity to (DocStore.read(appContext, id) ?: "")
+    }
+
+    /**
+     * Re-reads the original file backing [id]. If it still exists and its content
+     * differs from the cached snapshot, updates the cached content + metadata and
+     * returns true. Returns false when there is no source, the source is unreadable
+     * (e.g. a content URI whose permission lapsed), or the content is unchanged.
+     * Mirrors macOS `DocRepository.refreshFromSource` / Linux `refresh_from_source`.
+     */
+    suspend fun refreshFromSource(id: Long): Boolean {
+        val entity = dao.getById(id) ?: return false
+        val uri = entity.sourceUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return false
+        val text = MarkdownSources.readText(appContext, uri) ?: return false
+        val hash = ContentHash.sha256Hex(text)
+        if (hash == entity.contentHash) return false
+        dao.updateContent(
+            id = id,
+            hash = hash,
+            charCount = text.length,
+            sizeBytes = text.toByteArray(Charsets.UTF_8).size,
+            timestamp = now(),
+        )
+        DocStore.write(appContext, id, text)
+        return true
     }
 
     fun observeAll(): Flow<List<CachedDocEntity>> = dao.observeAll()

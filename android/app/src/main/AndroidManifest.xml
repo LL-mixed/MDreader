@@ -23,7 +23,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Open markdown by MIME type (content:// and file://) -->
+            <!-- Open markdown by MIME type (content:// and file://).
+                 Includes text/plain and octet-stream because many apps (WeChat, QQ,
+                 file managers) forward .md files under those generic types rather
+                 than text/markdown. -->
             <intent-filter android:label="@string/app_name">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -33,6 +36,8 @@
                 <data android:mimeType="text/markdown" />
                 <data android:mimeType="text/x-markdown" />
                 <data android:mimeType="application/markdown" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
 
             <!-- Open markdown by file extension when no MIME type is supplied -->
@@ -48,6 +53,15 @@
                 <data android:pathPattern=".*\\.markdown" />
                 <data android:pathPattern=".*\\.MARKDOWN" />
                 <data android:pathPattern=".*\\.mdown" />
+            </intent-filter>
+
+            <!-- SEND (share sheet): receive .md text shared by other apps. -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
     </application>

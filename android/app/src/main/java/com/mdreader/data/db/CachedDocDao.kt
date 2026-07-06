@@ -27,6 +27,13 @@ interface CachedDocDao {
     @Query("SELECT * FROM cached_docs WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): CachedDocEntity?
 
+    /** Updates the cached content metadata after a source refresh. */
+    @Query(
+        "UPDATE cached_docs SET content_hash = :hash, char_count = :charCount, " +
+            "size_bytes = :sizeBytes, opened_at = :timestamp WHERE id = :id"
+    )
+    suspend fun updateContent(id: Long, hash: String, charCount: Int, sizeBytes: Int, timestamp: Long)
+
     @Query("UPDATE cached_docs SET favorite = :favorite WHERE id = :id")
     suspend fun setFavorite(id: Long, favorite: Boolean)
 

@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -27,10 +29,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,49 +70,59 @@ fun LibraryScreen(
     }
     var pendingDelete by remember { mutableStateOf<CachedDocEntity?>(null) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    if (showSearch) {
-                        OutlinedTextField(
-                            value = query,
-                            onValueChange = { query = it },
-                            placeholder = { Text(stringResource(R.string.search_placeholder)) },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    } else {
-                        Text(stringResource(R.string.library_title))
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        showSearch = !showSearch
-                        if (!showSearch) query = ""
-                    }) {
-                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search_placeholder))
-                    }
-                },
-            )
-        },
-    ) { padding ->
+    val topInset = glassTopBarInset()
+    val contentPadding = PaddingValues(top = topInset)
+    Box(modifier = Modifier.fillMaxSize()) {
         when {
-            all.isEmpty() -> EmptyState(Modifier.padding(padding), onOpenSample)
+            all.isEmpty() -> EmptyState(Modifier.padding(top = topInset), onOpenSample)
             shown.isEmpty() -> Box(
-                Modifier.fillMaxSize().padding(padding),
+                Modifier.fillMaxSize().padding(top = topInset),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(stringResource(R.string.search_no_result))
             }
             else -> DocList(
                 docs = shown,
-                contentPadding = padding,
+                contentPadding = contentPadding,
                 onOpen = onOpen,
                 onToggleFavorite = { doc -> scope.launch { repository.setFavorite(doc.id, !doc.favorite) } },
                 onRequestDelete = { pendingDelete = it },
             )
         }
+        GlassTopBar(
+            title = if (showSearch) "" else stringResource(R.string.library_title),
+            modifier = Modifier.align(Alignment.TopStart),
+            navigationIcon = if (showSearch) {
+                {
+                    IconButton(onClick = {
+                        showSearch = false
+                        query = ""
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    }
+                }
+            } else null,
+            titleContent = if (showSearch) {
+                {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text(stringResource(R.string.search_placeholder)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            } else null,
+            actions = {
+                if (!showSearch) {
+                    IconButton(onClick = {
+                        showSearch = true
+                    }) {
+                        Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search_placeholder))
+                    }
+                }
+            },
+        )
     }
 
     pendingDelete?.let { doc ->

@@ -11,6 +11,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,6 +32,10 @@ import com.mdreader.render.OutlineItem
  * the heading the user is currently reading ([activeIndex]), and reports clicks
  * via [onItemClick] with the heading's document-order index — the same index the
  * renderer scrolls to. Shows an empty hint when the document has no headings.
+ *
+ * When [onClose] is provided (modal drawer / narrow screens), a close (✕) button
+ * is shown in the header so the drawer can be dismissed without relying on the
+ * scrim tap (which `gesturesEnabled = false` makes unreliable on some devices).
  */
 @Composable
 fun OutlineDrawer(
@@ -35,15 +43,28 @@ fun OutlineDrawer(
     activeIndex: Int?,
     onItemClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    onClose: (() -> Unit)? = null,
 ) {
     // Width is left to the caller (modal drawer fills, side panel is fixed) so
     // the same composable serves both layouts without forcing full width.
     Column(modifier.fillMaxHeight()) {
-        Text(
-            text = "目录",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 8.dp),
-        )
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, top = 12.dp, end = 4.dp, bottom = 4.dp),
+        ) {
+            Text(
+                text = "目录",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            if (onClose != null) {
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭目录")
+                }
+            }
+        }
         if (items.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
