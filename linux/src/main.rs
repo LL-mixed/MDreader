@@ -13,15 +13,17 @@ use gio::prelude::*;
 use gio::SimpleAction;
 use gtk::prelude::*;
 use gtk::{
-    AboutDialog, Align, Application, Box as GtkBox, Entry, Label, License, Orientation,
-    Window as GtkWindow,
+    AboutDialog, Align, Application, Box as GtkBox, ComboBoxText, Entry, Label, License,
+    Orientation, Window as GtkWindow,
 };
 
 use app::{AppContext, InitialDoc};
 use store::cache::DocRepository;
 use store::session_store::SessionStore;
 use store::settings_store::SettingsStore;
+use store::theme_store::ThemeStore;
 use store::zoom_store::ZoomStore;
+use util::theme::ThemePref;
 
 const APP_ID: &str = "com.mdreader.MDreader";
 
@@ -49,6 +51,7 @@ fn main() {
     let ctx = Arc::new(AppContext {
         repo: Arc::new(DocRepository::open(&config::data_dir()).expect("failed to open cache")),
         zoom_store: Arc::new(Mutex::new(ZoomStore::open(&config::config_dir()))),
+        theme_store: Arc::new(Mutex::new(ThemeStore::open(&config::config_dir()))),
         session_store: Arc::new(Mutex::new(SessionStore::open(&config::config_dir()))),
         settings: Arc::new(Mutex::new(SettingsStore::open(&config::config_dir()))),
     });
@@ -235,7 +238,7 @@ fn show_about(app: &Application) {
 fn show_preferences(app: &Application, ctx: &Arc<AppContext>) {
     let win = GtkWindow::new();
     win.set_title(Some("首选项"));
-    win.set_default_size(420, 150);
+    win.set_default_size(460, 240);
     win.set_destroy_with_parent(true);
 
     let vbox = GtkBox::new(Orientation::Vertical, 6);
@@ -268,6 +271,39 @@ fn show_preferences(app: &Application, ctx: &Arc<AppContext>) {
     vbox.append(&title);
     vbox.append(&entry);
     vbox.append(&hint);
+
+    let theme_title = Label::new(Some("默认主题"));
+    theme_title.set_halign(Align::Start);
+    let theme_combo = ComboBoxText::new();
+    theme_combo.append_text("跟随系统");
+    theme_combo.append_text("浅色");
+    theme_combo.append_text("深色");
+    let cur_pref = ctx.settings.lock().unwrap().theme_pref();
+    theme_combo.set_active(match cur_pref {
+        ThemePref::System => Some(0),
+        ThemePref::Light => Some(1),
+        ThemePref::Dark => Some(2),
+    });
+    let theme_hint = Label::new(Some("未单独切换主题的文档使用此设置；已单独切换的文档保留各自选择。"));
+    theme_hint.set_halign(Align::Start);
+    theme_hint.add_css_class("dim-label");
+    theme_hint.set_wrap(true);
+    {
+        let ctx = ctx.clone();
+        theme_combo.connect_changed(move |c| {
+            let pref = match c.active().unwrap_or(0) {
+                1 => ThemePref::Light,
+                2 => ThemePref::Dark,
+                _ => ThemePref::System,
+            };
+            ctx.settings.lock().unwrap().set_theme_pref(pref);
+            app::apply_global_theme_pref(pref);
+        });
+    }
+    vbox.append(&theme_title);
+    vbox.append(&theme_combo);
+    vbox.append(&theme_hint);
+
     win.set_child(Some(&vbox));
 
     if let Some(parent) = app.active_window() {

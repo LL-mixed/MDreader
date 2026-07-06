@@ -36,8 +36,12 @@ final class ReaderModel: ObservableObject {
     private(set) var currentDocID: UUID?
     var repository: DocRepository?
     var zoomStore: ZoomStore?
+    var themeStore: ThemeStore?
     var sessionStore: SessionStore?
     var settings: SettingsStore?
+    /// Live OS color scheme, pushed in by ContentView; used only when the global pref is `.system`
+    /// and the current doc has no per-doc override.
+    var systemDark: Bool = false
 
     /// Per-window source watcher; observes `currentSourceURL` for external edits.
     private var sourceWatcher: SourceFileWatcher?
@@ -63,6 +67,7 @@ final class ReaderModel: ObservableObject {
         currentSourceURL = nil // willSet tears down the watcher
         resetOutline()
         restoreZoom()
+        restoreTheme()
     }
 
     func refreshDocs() {
@@ -101,6 +106,7 @@ final class ReaderModel: ObservableObject {
         resetOutline()
         restoreZoom()
         rebuildWatcherIfNeeded()
+        restoreTheme()
     }
 
     func openCached(_ doc: DocInfo) {
@@ -115,6 +121,7 @@ final class ReaderModel: ObservableObject {
         }
         resetOutline()
         restoreZoom()
+        restoreTheme()
         sessionStore?.setLastDocID(doc.id)
         if refreshed { refreshDocs() }
         rebuildWatcherIfNeeded()
@@ -231,6 +238,54 @@ final class ReaderModel: ObservableObject {
         guard let store = zoomStore else { return }
         let hash = ContentHash.sha256Hex(markdown)
         store.setZoom(zoom, for: hash)
+    }
+
+    // MARK: - Theme
+
+    /// Pure decision rule (unit-tested): a per-doc override wins; otherwise the global default,
+    /// where `.system` follows the OS color scheme.
+    static func resolveDark(perDoc: Bool?, pref: ThemePref, systemDark: Bool) -> Bool {
+        if let d = perDoc { return d }
+        switch pref {
+        case .system: return systemDark
+        case .light: return false
+        case .dark: return true
+        }
+    }
+
+    private var currentThemePref: ThemePref {
+        settings?.settings.themePref ?? .system
+    }
+
+    /// Recompute isDark from persisted state. Call after any content change (open/drop/sample) so
+    /// the displayed theme matches the decision rule.
+    func restoreTheme() {
+        let hash = ContentHash.sha256Hex(markdown)
+        let perDoc = themeStore?.isDark(forHash: hash)
+        isDark = Self.resolveDark(perDoc: perDoc, pref: currentThemePref, systemDark: systemDark)
+    }
+
+    /// Toolbar toggle: flip this doc's theme and persist the override so it sticks on reopen.
+    func toggleTheme() {
+        let newDark = !isDark
+        let hash = ContentHash.sha256Hex(markdown)
+        if !hash.isEmpty {
+            themeStore?.setDark(newDark, forHash: hash)
+        }
+        isDark = newDark
+    }
+
+    /// Push the live OS color scheme into the model; docs without a per-doc override re-follow it.
+    func setSystemDark(_ dark: Bool) {
+        systemDark = dark
+        reapplyThemeIfUnpinned()
+    }
+
+    /// When the global pref changes, docs WITHOUT an override re-follow; docs WITH one keep it.
+    func reapplyThemeIfUnpinned() {
+        let hash = ContentHash.sha256Hex(markdown)
+        if themeStore?.isDark(forHash: hash) != nil { return }
+        isDark = Self.resolveDark(perDoc: nil, pref: currentThemePref, systemDark: systemDark)
     }
 
     private func resetOutline() {

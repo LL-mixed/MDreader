@@ -7,11 +7,17 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// User-editable preferences. `editorCommand` mirrors macOS's Codable key name.
+use crate::util::theme::ThemePref;
+
+/// User-editable preferences. `editorCommand`/`themePref` mirror macOS's Codable key names.
+/// `themePref` is the global default theme (System/Light/Dark); per-doc overrides live in
+/// ThemeStore. Missing fields fall back to defaults so a stale/older config never breaks launch.
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Eq, Debug)]
 pub struct AppSettings {
     #[serde(rename = "editorCommand", default)]
     pub editor_command: String,
+    #[serde(rename = "themePref", default)]
+    pub theme_pref: ThemePref,
 }
 
 pub struct SettingsStore {
@@ -35,6 +41,15 @@ impl SettingsStore {
 
     pub fn set_editor_command(&mut self, command: String) {
         self.settings.editor_command = command;
+        self.save();
+    }
+
+    pub fn theme_pref(&self) -> ThemePref {
+        self.settings.theme_pref
+    }
+
+    pub fn set_theme_pref(&mut self, pref: ThemePref) {
+        self.settings.theme_pref = pref;
         self.save();
     }
 
@@ -92,6 +107,31 @@ mod tests {
         fs::write(dir.join("config.json"), r#"{"editorCommand":"Code","futureKey":7}"#).unwrap();
         let s = SettingsStore::open(&dir);
         assert_eq!(s.editor_command(), "Code");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round_trip_persists_theme_pref() {
+        let dir = tmp();
+        {
+            let mut s = SettingsStore::open(&dir);
+            s.set_theme_pref(ThemePref::Dark);
+            assert_eq!(s.theme_pref(), ThemePref::Dark);
+        }
+        let s = SettingsStore::open(&dir);
+        assert_eq!(s.theme_pref(), ThemePref::Dark);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_theme_pref_defaults_to_system() {
+        // An older config that predates themePref must still load (and yield System), so existing
+        // users don't lose their editorCommand on upgrade.
+        let dir = tmp();
+        fs::write(dir.join("config.json"), r#"{"editorCommand":"Typora"}"#).unwrap();
+        let s = SettingsStore::open(&dir);
+        assert_eq!(s.editor_command(), "Typora");
+        assert_eq!(s.theme_pref(), ThemePref::System);
         let _ = fs::remove_dir_all(&dir);
     }
 }

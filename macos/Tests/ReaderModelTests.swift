@@ -45,6 +45,24 @@ final class ReaderModelTests: XCTestCase {
         XCTAssertEqual(model.zoom, 1.0)
     }
 
+    func testResolveDarkPerDocOverrideWins() {
+        for pref in [ThemePref.system, .light, .dark] {
+            for sys in [false, true] {
+                XCTAssertEqual(ReaderModel.resolveDark(perDoc: true, pref: pref, systemDark: sys), true)
+                XCTAssertEqual(ReaderModel.resolveDark(perDoc: false, pref: pref, systemDark: sys), false)
+            }
+        }
+    }
+
+    func testResolveDarkGlobalFallback() {
+        XCTAssertEqual(ReaderModel.resolveDark(perDoc: nil, pref: .light, systemDark: false), false)
+        XCTAssertEqual(ReaderModel.resolveDark(perDoc: nil, pref: .light, systemDark: true), false)
+        XCTAssertEqual(ReaderModel.resolveDark(perDoc: nil, pref: .dark, systemDark: false), true)
+        XCTAssertEqual(ReaderModel.resolveDark(perDoc: nil, pref: .dark, systemDark: true), true)
+        XCTAssertEqual(ReaderModel.resolveDark(perDoc: nil, pref: .system, systemDark: false), false)
+        XCTAssertEqual(ReaderModel.resolveDark(perDoc: nil, pref: .system, systemDark: true), true)
+    }
+
     private func makeRepo() throws -> (DocRepository, SessionStore) {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(for: CachedDoc.self, configurations: config)

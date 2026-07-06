@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use gio::prelude::{FileExt, FileMonitorExt};
+use gio::{File, FileMonitorFlags};
 use gtk::gdk::{BUTTON_SECONDARY, ModifierType};
 use gtk::pango::{AttrList, EllipsizeMode};
 use gtk::prelude::*;
@@ -24,10 +27,11 @@ use crate::store::content_hash::sha256_hex;
 use crate::store::doc_info::DocInfo;
 use crate::store::{
     cache::DocRepository, session_store::SessionStore, settings_store::SettingsStore,
-    zoom_store::ZoomStore,
+    theme_store::ThemeStore, zoom_store::ZoomStore,
 };
 use crate::util::date_buckets::{self, DayBucket};
 use crate::util::markdown_ext;
+use crate::util::theme::{resolve_dark, ThemePref};
 use crate::util::titles;
 use crate::util::zoom as zoom_util;
 
@@ -35,6 +39,7 @@ use crate::util::zoom as zoom_util;
 pub struct AppContext {
     pub repo: Arc<DocRepository>,
     pub zoom_store: Arc<Mutex<ZoomStore>>,
+    pub theme_store: Arc<Mutex<ThemeStore>>,
     pub session_store: Arc<Mutex<SessionStore>>,
     pub settings: Arc<Mutex<SettingsStore>>,
 }
@@ -61,6 +66,7 @@ struct State {
     btn_in: Button,
     btn_reset: Button,
     btn_edit: Button,
+    btn_refresh: Button,
     library_list: ListBox,
     outline_list: ListBox,
     library_empty: Label,
@@ -72,6 +78,8 @@ struct State {
     current_hash: String,
     base_dir: Option<PathBuf>,
     source: Option<String>,
+    file_monitor: Option<gio::FileMonitor>,
+    reload_debounce: Option<glib::source::SourceId>,
     title: String,
     outline: Vec<OutlineItem>,
     active: Option<usize>,
@@ -136,6 +144,8 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     // Sidebar show/hide (mac parity: NavigationSplitView's built-in sidebar toggle).
     let btn_sidebar = Button::from_icon_name("sidebar-show-symbolic");
     btn_sidebar.set_tooltip_text(Some("显示/隐藏侧栏"));
+    let btn_refresh = Button::from_icon_name("view-refresh-symbolic");
+    btn_refresh.set_tooltip_text(Some("从原文件刷新（F5 / Ctrl+R）"));
     // Doc title shown in the header center (the HeaderBar doubles as the window titlebar).
     let title_label = Label::new(None);
     title_label.set_ellipsize(EllipsizeMode::End);
@@ -153,6 +163,7 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     let header = HeaderBar::new();
     header.set_title_widget(Some(&title_label));
     header.pack_start(&btn_sidebar);
+    header.pack_start(&btn_refresh);
     header.pack_start(&btn_out);
     header.pack_start(&zoom_label);
     header.pack_start(&btn_in);
@@ -178,6 +189,7 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
         btn_in: btn_in.clone(),
         btn_reset: btn_reset.clone(),
         btn_edit: btn_edit.clone(),
+        btn_refresh: btn_refresh.clone(),
         library_list: library_list.clone(),
         outline_list: outline_list.clone(),
         library_empty: library_empty.clone(),
@@ -189,6 +201,8 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
         current_hash: hash.clone(),
         base_dir: base.clone(),
         source,
+        file_monitor: None,
+        reload_debounce: None,
         title: title.clone(),
         outline: Vec::new(),
         active: None,
@@ -254,6 +268,8 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
     let s = state.clone();
     btn_edit.connect_clicked(move |_| edit_current(&s));
     let s = state.clone();
+    btn_refresh.connect_clicked(move |_| reload_current(&s, true));
+    let s = state.clone();
     btn_pdf.connect_clicked(move |_| export_current_pdf(&s));
     let sb = sidebar_scroll.clone();
     btn_sidebar.connect_clicked(move |_| {
@@ -282,10 +298,58 @@ pub fn open_window(ctx: &Arc<AppContext>, app: &Application, initial: InitialDoc
 
     install_zoom_shortcuts(&state, &window);
 
+    // Cancel any pending auto-reload and drop the file monitor on close, so a debounce timer
+    // can never fire into a freed State.
+    {
+        let s = state.clone();
+        window.connect_close_request(move |_| {
+            if let Some(id) = s.borrow_mut().reload_debounce.take() {
+                id.remove();
+            }
+            let _ = s.borrow_mut().file_monitor.take();
+            gtk::Inhibit(false)
+        });
+    }
+
     refresh_library(&state);
     update_zoom_label(&state);
     update_edit_sensitivity(&state);
+    update_refresh_sensitivity(&state);
+    arm_file_monitor(&state);
+    // React to OS color-scheme changes (System mode) and to our own apply_global_theme_pref
+    // (Light/Dark selection): docs without a per-doc override re-follow the resolved default.
+    // Weak ref so closing this window disconnects it instead of leaking the State.
+    {
+        if let Some(settings) = gtk::Settings::default() {
+            let weak = Rc::downgrade(&state);
+            settings.connect_notify_local(
+                Some("gtk-application-prefer-dark-theme"),
+                move |_, _| {
+                    // set_prefer_dark_theme emits notify synchronously, so calling reapply inline
+                    // recurses on the property-set stack and stalls the main loop (window paints
+                    // then ANRs on input). Defer to idle: the re-entrant set either no-ops (value
+                    // unchanged) or schedules another idle that terminates once dark stabilizes.
+                    if let Some(s) = weak.upgrade() {
+                        let _ = glib::source::idle_add_local_once(move || {
+                            reapply_theme_if_unpinned(&s);
+                        });
+                    }
+                },
+            );
+        }
+    }
     window.present();
+    // Sync chrome to the active doc's dark flag on idle (after present, so the notify chain
+    // can't block the window from mapping). This is the per-doc resolved value, NOT the global
+    // pref — a doc pinned Light under a Dark default must still paint chrome Light to match its
+    // body, or the sidebar/outline ends up Dark while the body is Light.
+    {
+        let s = state.clone();
+        let _ = glib::source::idle_add_local_once(move || {
+            let dark = s.borrow().dark;
+            apply_dark(&s, dark);
+        });
+    }
 }
 
 /// Resolved content for a freshly opened window. A named struct (not an 8-tuple) so callers
@@ -306,7 +370,7 @@ fn resolve_initial(ctx: &Arc<AppContext>, initial: &InitialDoc) -> ResolvedDoc {
         content: webview::bundled_sample(),
         title: "MDreader".to_string(),
         base: None,
-        dark: false,
+        dark: compute_dark_for(ctx, ""),
         zoom: 1.0,
         doc_id: None,
         hash: String::new(),
@@ -323,7 +387,7 @@ fn resolve_initial(ctx: &Arc<AppContext>, initial: &InitialDoc) -> ResolvedDoc {
                 content: content.clone(),
                 title: title.clone(),
                 base: base.clone(),
-                dark: false,
+                dark: compute_dark_for(ctx, &hash),
                 zoom,
                 doc_id: Some(id),
                 hash,
@@ -342,7 +406,7 @@ fn resolve_initial(ctx: &Arc<AppContext>, initial: &InitialDoc) -> ResolvedDoc {
                         content: text,
                         title: d.title,
                         base,
-                        dark: false,
+                        dark: compute_dark_for(ctx, &d.content_hash),
                         zoom,
                         doc_id: Some(*id),
                         hash: d.content_hash,
@@ -374,10 +438,17 @@ fn install_zoom_shortcuts(state: &Rc<RefCell<State>>, window: &ApplicationWindow
     let key = EventControllerKey::new();
     let s = state.clone();
     key.connect_key_pressed(move |_, k, _code, modifier| {
-        if !modifier.contains(ModifierType::CONTROL_MASK) {
+        let name = k.name().unwrap_or_default();
+        let ctrl = modifier.contains(ModifierType::CONTROL_MASK);
+        // F5 / Ctrl+R: reload the current doc from its source file.
+        if name == "F5" || (ctrl && (name == "r" || name == "R")) {
+            reload_current(&s, true);
+            return gtk::Inhibit(true);
+        }
+        if !ctrl {
             return gtk::Inhibit(false);
         }
-        match k.name().unwrap_or_default().as_str() {
+        match name.as_str() {
             "plus" | "equal" | "KP_Add" => {
                 zoom_by(&s, true);
                 gtk::Inhibit(true)
@@ -620,7 +691,7 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
     let base = doc.source_uri.as_ref().and_then(parent_of);
     let zoom = ctx.zoom_store.lock().unwrap().zoom_for(&doc.content_hash).unwrap_or(1.0);
 
-    let (dark, wv, window, title) = {
+    let (wv, window, title) = {
         let mut s = state.borrow_mut();
         s.markdown = text.clone();
         s.title = doc.title.clone();
@@ -629,8 +700,11 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
         s.current_hash = doc.content_hash.clone();
         s.source = doc.source_uri.clone();
         s.zoom = zoom;
-        (s.dark, s.webview.clone(), s.window.clone(), doc.title.clone())
+        (s.webview.clone(), s.window.clone(), doc.title.clone())
     };
+    // Theme: a stored per-doc override wins, else follow the global default (system/light/dark).
+    let dark = compute_dark(state);
+    apply_dark(state, dark);
     window.set_title(Some(&title));
     state.borrow().title_label.set_label(&title);
     if let Some(wv) = wv {
@@ -645,6 +719,8 @@ fn open_cached(state: &Rc<RefCell<State>>, id: Uuid) {
     }
     update_zoom_label(state);
     update_edit_sensitivity(state);
+    update_refresh_sensitivity(state);
+    arm_file_monitor(state);
 }
 
 /// Replace the current window's content with dropped text (mac parity: openText/applyText — a
@@ -658,19 +734,21 @@ fn apply_dropped_text(state: &Rc<RefCell<State>>, content: &str, name: &str) {
     ctx.session_store.lock().unwrap().set_last_doc_id(Some(id));
     let zoom = ctx.zoom_store.lock().unwrap().zoom_for(&hash).unwrap_or(1.0);
 
-    let (dark, wv, window) = {
+    let (wv, window) = {
         let mut s = state.borrow_mut();
         s.markdown = content.to_string();
         s.title = title.clone();
         s.base_dir = None;
-        s.source = None;
         s.current_doc_id = Some(id);
-        s.current_hash = hash;
+        s.current_hash = hash.clone();
+        s.source = None;
         s.zoom = zoom;
         s.outline.clear();
         s.active = None;
-        (s.dark, s.webview.clone(), s.window.clone())
+        (s.webview.clone(), s.window.clone())
     };
+    let dark = compute_dark(state);
+    apply_dark(state, dark);
     window.set_title(Some(&title));
     state.borrow().title_label.set_label(&title);
     if let Some(wv) = wv {
@@ -681,6 +759,8 @@ fn apply_dropped_text(state: &Rc<RefCell<State>>, content: &str, name: &str) {
     refresh_library(state);
     update_zoom_label(state);
     update_edit_sensitivity(state);
+    update_refresh_sensitivity(state);
+    arm_file_monitor(state);
 }
 
 fn zoom_by(state: &Rc<RefCell<State>>, up: bool) {
@@ -721,16 +801,109 @@ fn update_zoom_label(state: &Rc<RefCell<State>>) {
 }
 
 fn toggle_theme(state: &Rc<RefCell<State>>) {
-    let (dark, md, base, wv) = {
+    let (dark, hash, ctx, md, base, wv) = {
         let mut s = state.borrow_mut();
         s.dark = !s.dark;
-        (s.dark, s.markdown.clone(), s.base_dir.clone(), s.webview.clone())
+        (
+            s.dark,
+            s.current_hash.clone(),
+            s.ctx.clone(),
+            s.markdown.clone(),
+            s.base_dir.clone(),
+            s.webview.clone(),
+        )
     };
+    // Persist the override so this doc keeps its theme on reopen. The sample and content-less
+    // drops (empty hash) aren't persisted — they follow the global default instead.
+    if !hash.is_empty() {
+        ctx.theme_store.lock().unwrap().set_dark(dark, &hash);
+    }
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_application_prefer_dark_theme(dark);
     }
     if let Some(wv) = wv {
         webview::render(&wv, &md, dark, base.as_deref());
+    }
+}
+
+/// Current OS color scheme as seen through GTK's `gtk-application-prefer-dark-theme`. On GNOME this
+/// tracks the system dark mode; on desktops that don't set it, it defaults to light.
+fn system_dark() -> bool {
+    gtk::Settings::default()
+        .map(|s| s.is_gtk_application_prefer_dark_theme())
+        .unwrap_or(false)
+}
+
+/// Effective dark for a doc not yet attached to a window (the resolve_initial path): a stored
+/// per-doc override by hash wins, else the global default resolves against the system scheme.
+fn compute_dark_for(ctx: &Arc<AppContext>, hash: &str) -> bool {
+    let per_doc = ctx.theme_store.lock().unwrap().dark_for(hash);
+    let pref = ctx.settings.lock().unwrap().theme_pref();
+    resolve_dark(per_doc, pref, system_dark())
+}
+
+/// Effective dark for the current doc of an existing window.
+fn compute_dark(state: &Rc<RefCell<State>>) -> bool {
+    let (per_doc, pref) = {
+        let s = state.borrow();
+        let hash = s.current_hash.clone();
+        let per_doc = s.ctx.theme_store.lock().unwrap().dark_for(&hash);
+        let pref = s.ctx.settings.lock().unwrap().theme_pref();
+        (per_doc, pref)
+    };
+    resolve_dark(per_doc, pref, system_dark())
+}
+
+/// Push the global theme preference into GTK's chrome via `gtk-application-prefer-dark-theme`.
+/// Light/Dark force the value; System snaps it to the current OS scheme so the chrome matches what
+/// an unpinned doc will compute. Each window's `notify` handler then re-renders any doc without a
+/// per-doc override.
+pub fn apply_global_theme_pref(pref: ThemePref) {
+    let Some(settings) = gtk::Settings::default() else { return; };
+    match pref {
+        ThemePref::Light => settings.set_gtk_application_prefer_dark_theme(false),
+        ThemePref::Dark => settings.set_gtk_application_prefer_dark_theme(true),
+        ThemePref::System => settings.set_gtk_application_prefer_dark_theme(system_dark()),
+    }
+}
+
+/// Set the window's dark flag AND sync GTK's chrome to it. The guard reads the *live*
+/// `gtk-application-prefer-dark-theme` (not s.dark) so an external write that moved the chrome
+/// (prefs dropdown / OS scheme) is pulled back to the doc's dark flag, while no-op sets don't
+/// spam notify. This is what keeps the sidebar/outline (which follows chrome) aligned with the
+/// rendered body (which follows s.dark), including pinned docs under a different global default.
+fn apply_dark(state: &Rc<RefCell<State>>, dark: bool) {
+    state.borrow_mut().dark = dark;
+    if let Some(settings) = gtk::Settings::default() {
+        if settings.is_gtk_application_prefer_dark_theme() != dark {
+            settings.set_gtk_application_prefer_dark_theme(dark);
+        }
+    }
+}
+
+/// Re-resolve this window's theme after a global-pref or OS-scheme change. The chrome is always
+/// (re)glued to the resolved dark — a pinned doc keeps its body theme, but an external prefer-dark
+/// write (prefs dropdown / OS) may have moved its chrome and must be pulled back. Unpinned docs
+/// additionally re-render when the resolved value actually changes.
+fn reapply_theme_if_unpinned(state: &Rc<RefCell<State>>) {
+    let pinned = {
+        let s = state.borrow();
+        let hash = s.current_hash.clone();
+        let pinned = s.ctx.theme_store.lock().unwrap().dark_for(&hash);
+        pinned
+    };
+    let new_dark = compute_dark(state);
+    let prev_dark = state.borrow().dark;
+    apply_dark(state, new_dark);
+    if pinned.is_some() || prev_dark == new_dark {
+        return;
+    }
+    let (md, base, wv) = {
+        let s = state.borrow();
+        (s.markdown.clone(), s.base_dir.clone(), s.webview.clone())
+    };
+    if let Some(wv) = wv {
+        webview::render(&wv, &md, new_dark, base.as_deref());
     }
 }
 
@@ -741,6 +914,81 @@ fn update_edit_sensitivity(state: &Rc<RefCell<State>>) {
         (s.source.is_some(), s.btn_edit.clone())
     };
     btn.set_sensitive(has_source);
+}
+
+/// Enable the "refresh" button only when the current doc has a backing source file.
+fn update_refresh_sensitivity(state: &Rc<RefCell<State>>) {
+    let (has_source, btn) = {
+        let s = state.borrow();
+        (s.source.is_some(), s.btn_refresh.clone())
+    };
+    btn.set_sensitive(has_source);
+}
+
+/// Reload the current doc from its original file (header button / F5 / Ctrl+R). Reuses open_cached,
+/// which runs refresh_from_source then re-renders. When `force` is true (a user-initiated reload)
+/// the doc is re-rendered unconditionally — the user may have changed external resources the hash
+/// doesn't cover (images, etc.). When false (auto-reload from the file monitor) the render is
+/// skipped on identical content so noisy monitor events stay cheap.
+fn reload_current(state: &Rc<RefCell<State>>, force: bool) {
+    let (id, ctx) = {
+        let s = state.borrow();
+        (s.current_doc_id, s.ctx.clone())
+    };
+    let Some(id) = id else { return; };
+    if force || ctx.repo.refresh_from_source(id) {
+        open_cached(state, id);
+    }
+}
+
+/// (Re)arm a file-changed monitor on the current doc's source. Re-invoked whenever the current
+/// doc changes (open/switch/drop) or after an auto-reload, so the watch always tracks the live
+/// inode — editors that save via atomic rename replace the inode, and recreating the monitor
+/// re-attaches to the new one. The signal closure holds a Weak ref to avoid an Rc cycle (State
+/// owns the monitor, which would otherwise own State).
+fn arm_file_monitor(state: &Rc<RefCell<State>>) {
+    // Drop the previous monitor and cancel any pending debounce first.
+    let _ = state.borrow_mut().file_monitor.take();
+    if let Some(id) = state.borrow_mut().reload_debounce.take() {
+        id.remove();
+    }
+
+    let Some(path) = state.borrow().source.clone() else {
+        return;
+    };
+    // Only watch when the file currently exists; refresh_from_source tolerates later deletion.
+    if !std::path::Path::new(&path).exists() {
+        return;
+    }
+    let file = File::for_path(&path);
+    let Ok(monitor) = file.monitor_file(FileMonitorFlags::NONE, None::<&gio::Cancellable>) else {
+        // Some filesystems (NFS, certain FUSE) don't support monitoring; fall back to manual only.
+        return;
+    };
+    let weak = Rc::downgrade(state);
+    monitor.connect_changed(move |_m, _file, _other, _event| {
+        // React to every event and let refresh_from_source's hash compare decide whether a
+        // reload is warranted — this sidesteps platform/editor differences in which
+        // FileMonitorEvent variant they emit on save.
+        if let Some(s) = weak.upgrade() {
+            schedule_reload(&s);
+        }
+    });
+    state.borrow_mut().file_monitor = Some(monitor);
+}
+
+/// Debounce monitor chatter: editors often emit several Changed events per save. Each event
+/// resets a 300ms timer; the reload only fires after the file has settled.
+fn schedule_reload(state: &Rc<RefCell<State>>) {
+    if let Some(id) = state.borrow_mut().reload_debounce.take() {
+        id.remove();
+    }
+    let s = state.clone();
+    let id = glib::source::timeout_add_local_once(Duration::from_millis(300), move || {
+        s.borrow_mut().reload_debounce = None;
+        reload_current(&s, false);
+    });
+    state.borrow_mut().reload_debounce = Some(id);
 }
 
 /// Open the current doc's source file in the configured external editor; fall back to
