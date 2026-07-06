@@ -18,7 +18,7 @@ final class ReaderModelTests: XCTestCase {
         try body.write(to: url, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let model = ReaderModel()
+        let model = makeModel()
         model.open(url)
         XCTAssertEqual(model.markdown, body)
         XCTAssertEqual(model.title, "note")
@@ -54,10 +54,20 @@ final class ReaderModelTests: XCTestCase {
         return (DocRepository(container: container, docsDir: docsDir), SessionStore(directory: sessionDir))
     }
 
+    /// Builds a `ReaderModel` with live source-watching DISABLED. The watcher's
+    /// `DispatchSource` lifecycle is incompatible with the short-lived test-host
+    /// process; watcher behaviour is covered separately. Tests that need the
+    /// watcher armed can set `model.sourceWatcherFactory` themselves.
+    private func makeModel(repository: DocRepository? = nil, session: SessionStore? = nil) -> ReaderModel {
+        let model = ReaderModel(repository: repository)
+        model.sessionStore = session
+        model.sourceWatcherFactory = { _ in nil }
+        return model
+    }
+
     func testRestoreLastDocReopensStoredDoc() throws {
         let (repo, session) = try makeRepo()
-        let model = ReaderModel(repository: repo)
-        model.sessionStore = session
+        let model = makeModel(repository: repo, session: session)
 
         let id = repo.cache(title: "Hello", markdown: "# Hello", sourceURI: nil)
         session.setLastDocID(id)
@@ -72,8 +82,7 @@ final class ReaderModelTests: XCTestCase {
         let sessionDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let session = SessionStore(directory: sessionDir)
         session.setLastDocID(UUID())
-        let model = ReaderModel()
-        model.sessionStore = session
+        let model = makeModel(session: session)
         model.restoreLastDoc()
         XCTAssertNil(session.lastDocID)
     }
@@ -82,8 +91,7 @@ final class ReaderModelTests: XCTestCase {
         let (repo, session) = try makeRepo()
         repo.cache(title: "Cached", markdown: "# Body", sourceURI: nil)
 
-        let model = ReaderModel(repository: repo)
-        model.sessionStore = session
+        let model = makeModel(repository: repo, session: session)
         model.refreshDocs()
         let doc = try XCTUnwrap(model.docs.first)
         model.openCached(doc)
@@ -97,8 +105,7 @@ final class ReaderModelTests: XCTestCase {
         let url = dir.appendingPathComponent("note.md")
         try "# Note".write(to: url, atomically: true, encoding: .utf8)
 
-        let model = ReaderModel(repository: repo)
-        model.sessionStore = session
+        let model = makeModel(repository: repo, session: session)
         model.open(url)
         XCTAssertEqual(session.lastDocID, repo.all().first?.id)
     }
@@ -117,8 +124,7 @@ final class ReaderModelTests: XCTestCase {
         let id = repo.cache(title: "note", markdown: "# v1", sourceURI: url.path)
         try "# v2".write(to: url, atomically: true, encoding: .utf8)
 
-        let model = ReaderModel(repository: repo)
-        model.sessionStore = session
+        let model = makeModel(repository: repo, session: session)
         model.refreshDocs()
         let doc = try XCTUnwrap(model.docs.first(where: { $0.id == id }))
         model.openCached(doc)
@@ -130,8 +136,7 @@ final class ReaderModelTests: XCTestCase {
         let url = try writeSource("note.md", "# v1")
         let id = repo.cache(title: "note", markdown: "# v1", sourceURI: url.path)
 
-        let model = ReaderModel(repository: repo)
-        model.sessionStore = session
+        let model = makeModel(repository: repo, session: session)
         model.refreshDocs()
         let doc = try XCTUnwrap(model.docs.first(where: { $0.id == id }))
         model.openCached(doc)
@@ -140,5 +145,40 @@ final class ReaderModelTests: XCTestCase {
         try "# v2".write(to: url, atomically: true, encoding: .utf8)
         model.refreshDoc(doc)
         XCTAssertEqual(model.markdown, "# v2")
+    }
+
+    // MARK: - Source change tracking (auto-reload)
+
+    /// Opening a file via `open(URL:)` records the cache UUID as `currentDocID`,
+    /// which the source watcher needs in order to reload.
+    func testOpenRecordsCurrentDocID() throws {
+        let (repo, session) = try makeRepo()
+        let url = try writeSource("note.md", "# v1")
+
+        let model = makeModel(repository: repo, session: session)
+        model.open(url)
+
+        XCTAssertEqual(model.currentDocID, repo.all().first?.id)
+    }
+
+    // The full "external edit → auto reload" path is exercised by
+    // SourceFileWatcherTests (watcher fires on real disk changes) combined with
+    // testRefreshDocReloadsFromSource (which runs the same refreshFromSource +
+    // reopen path the watcher's callback uses). A single-process end-to-end test
+    // that arms a live DispatchSource inside the test host crashes the host at
+    // process shutdown, so the contract is split across those two instead.
+
+    /// Deleting the current doc tears down the watcher and clears the tracking id.
+    func testDeleteCurrentDocClearsWatcher() throws {
+        let (repo, session) = try makeRepo()
+        let url = try writeSource("note.md", "# v1")
+
+        let model = makeModel(repository: repo, session: session)
+        model.open(url)
+        let id = try XCTUnwrap(model.currentDocID)
+
+        model.deleteDoc(id: id)
+        XCTAssertNil(model.currentDocID)
+        XCTAssertNil(model.currentSourceURL)
     }
 }

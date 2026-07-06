@@ -19,23 +19,48 @@ final class ReaderModel: ObservableObject {
     @Published var activeHeadingIndex: Int? = nil
     @Published var scrollRequest: Int? = nil
     @Published var zoom: Double = 1.0
-    @Published var currentSourceURL: URL? = nil
+    @Published var currentSourceURL: URL? = nil {
+        willSet {
+            // Tear down any watcher bound to the previous source before swapping in
+            // a new one (or nil). The new watcher is rebuilt by the open paths.
+            if newValue?.path != currentSourceURL?.path { teardownWatcher() }
+        }
+    }
     @Published var exportRequest: Int = 0
     @Published var returnRequest: Int = 0
     @Published var navigatedAway: Bool = false
+
+    /// UUID of the cached doc backing whatever is currently displayed, regardless
+    /// of how it was opened (file, drag-drop, or library). `nil` for the bundled
+    /// sample or drag-dropped text with no source. Drives source-change tracking.
+    private(set) var currentDocID: UUID?
     var repository: DocRepository?
     var zoomStore: ZoomStore?
     var sessionStore: SessionStore?
     var settings: SettingsStore?
 
+    /// Per-window source watcher; observes `currentSourceURL` for external edits.
+    private var sourceWatcher: SourceFileWatcher?
+
+    /// Builds the watcher for a given path. Overridable so tests can disable live
+    /// file watching (the production default arms a real `DispatchSource`).
+    var sourceWatcherFactory: (String) -> SourceFileWatcher? = { SourceFileWatcher(path: $0) }
+
     init(repository: DocRepository? = nil) {
         self.repository = repository
+    }
+
+    deinit {
+        // `SourceFileWatcher` hops to its own queue on cancel, so this is safe from
+        // any thread (e.g. the SwiftUI teardown path).
+        sourceWatcher?.cancel()
     }
 
     func loadSample() {
         markdown = Self.sampleMarkdown
         title = "MDreader"
-        currentSourceURL = nil
+        currentDocID = nil
+        currentSourceURL = nil // willSet tears down the watcher
         resetOutline()
         restoreZoom()
     }
@@ -65,13 +90,17 @@ final class ReaderModel: ObservableObject {
     private func applyText(_ text: String, named: String, sourceURI: String?, sourceURL: URL?) {
         markdown = text
         title = (named as NSString).deletingPathExtension
+        let cachedID = repository?.cache(title: title, markdown: text, sourceURI: sourceURI)
+        currentDocID = cachedID
+        if let cachedID { sessionStore?.setLastDocID(cachedID) }
+        // Set the URL only after currentDocID is known, so a watcher built from it
+        // can resolve the cache UUID. The willSet on currentSourceURL tears down
+        // the previous watcher; rebuildWatcherIfNeeded() arms the new one.
         currentSourceURL = sourceURL
-        if let id = repository?.cache(title: title, markdown: text, sourceURI: sourceURI) {
-            sessionStore?.setLastDocID(id)
-        }
         refreshDocs()
         resetOutline()
         restoreZoom()
+        rebuildWatcherIfNeeded()
     }
 
     func openCached(_ doc: DocInfo) {
@@ -80,6 +109,7 @@ final class ReaderModel: ObservableObject {
         markdown = text
         title = doc.title
         selectedDocID = doc.id
+        currentDocID = doc.id
         currentSourceURL = doc.sourceURI.flatMap {
             FileManager.default.fileExists(atPath: $0) ? URL(fileURLWithPath: $0) : nil
         }
@@ -87,6 +117,7 @@ final class ReaderModel: ObservableObject {
         restoreZoom()
         sessionStore?.setLastDocID(doc.id)
         if refreshed { refreshDocs() }
+        rebuildWatcherIfNeeded()
     }
 
     /// Manually forces a re-read of the original file for `doc`, then displays it.
@@ -112,6 +143,10 @@ final class ReaderModel: ObservableObject {
     func deleteDoc(id: UUID) {
         repository?.delete(id: id)
         if selectedDocID == id { selectedDocID = nil }
+        if currentDocID == id {
+            currentDocID = nil
+            currentSourceURL = nil // willSet tears down the watcher
+        }
         refreshDocs()
     }
 
@@ -149,6 +184,42 @@ final class ReaderModel: ObservableObject {
 
     var canEdit: Bool {
         currentSourceURL != nil && !(settings?.settings.editorCommand.isEmpty ?? true)
+    }
+
+    // MARK: - Source change tracking
+
+    /// Arms a watcher on `currentSourceURL` (if any). Called from the open paths.
+    private func rebuildWatcherIfNeeded() {
+        teardownWatcher()
+        guard let url = currentSourceURL else { return }
+        guard let watcher = sourceWatcherFactory(url.path) else { return }
+        watcher.onChange = { [weak self] in self?.sourceDidChange() }
+        watcher.onCancel = { [weak self] in
+            // Source vanished (deleted/moved away). Drop the watcher so we don't
+            // leak; the displayed snapshot stays as-is.
+            DispatchQueue.main.async { self?.sourceWatcher = nil }
+        }
+        sourceWatcher = watcher
+    }
+
+    private func teardownWatcher() {
+        sourceWatcher?.cancel()
+        sourceWatcher = nil
+    }
+
+    /// Invoked on the watcher's queue when the current source file changes on disk.
+    /// Re-reads via the (idempotent, hash-gated) `refreshFromSource`, then hops to
+    /// main to update the displayed content without disturbing scroll/zoom/outline.
+    private func sourceDidChange() {
+        guard let id = currentDocID, let repo = repository else { return }
+        guard repo.refreshFromSource(id: id) else { return } // unchanged / unreadable
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.currentDocID == id,
+                  let text = repo.loadContent(id: id) else { return }
+            self.markdown = text
+            self.resetOutline()
+            self.refreshDocs()
+        }
     }
 
     private func restoreZoom() {
