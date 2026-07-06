@@ -1,6 +1,9 @@
 # OS
 .DS_Store
 
+# 本机开发环境备忘（私有，不入库）
+env.md
+
 # --- Android (android/) ---
 android/.gradle/
 android/local.properties
@@ -21,8 +24,10 @@ android/.externalNativeBuild/
 macos/**/*.xcodeproj
 macos/**/*.xcworkspace
 macos/build/
+macos/outputs/
 macos/MDreader/Info.plist
 macos/MDreader/build-info.json
+macos/*.build.log
 **/xcuserdata/
 **/DerivedData/
 
