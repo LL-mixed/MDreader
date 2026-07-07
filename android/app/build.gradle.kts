@@ -76,6 +76,9 @@ android {
         getByName("main") {
             assets.srcDir(rootProject.projectDir.parentFile.resolve("shared"))
         }
+        getByName("test") {
+            resources.srcDir(rootProject.projectDir.parentFile.resolve("shared/specs"))
+        }
     }
     packaging {
         resources {
@@ -108,4 +111,5 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation("org.json:json:20240303")
 }

@@ -1,0 +1,21 @@
+{
+  "_comment": "Shared golden test cases for ContentHash.sha256Hex (SHA-256, UTF-8, lowercase hex). Loaded by all three platforms.",
+  "cases": [
+    {
+      "input": "",
+      "expected": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "input": "abc",
+      "expected": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    {
+      "input": "hello",
+      "expected": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    },
+    {
+      "input": "some markdown content",
+      "expected": "3205dfe0af38d2a1889d2e05737fe0486552eb16269f316a1376942d49e0554e"
+    }
+  ]
+}

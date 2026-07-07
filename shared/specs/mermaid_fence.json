@@ -1,0 +1,90 @@
+{
+  "_comment": "Shared golden cases for MermaidFenceNormalizer.normalize: rewrite recognized diagram fences (sequence/gantt/flow/etc, case-insensitive) to the 'mermaid' tag. Loaded by all three platforms.",
+  "cases": [
+    {
+      "name": "standard mermaid unchanged",
+      "input": "```mermaid\nflowchart LR\n  A --> B\n```",
+      "expected": "```mermaid\nflowchart LR\n  A --> B\n```"
+    },
+    {
+      "name": "sequence -> mermaid",
+      "input": "```sequence\nsequenceDiagram\n  A->>B: hi\n```",
+      "expected": "```mermaid\nsequenceDiagram\n  A->>B: hi\n```"
+    },
+    {
+      "name": "alias case-insensitive",
+      "input": "```Sequence\nsequenceDiagram\n  A->>B: hi\n```",
+      "expected": "```mermaid\nsequenceDiagram\n  A->>B: hi\n```"
+    },
+    {
+      "name": "gantt alias",
+      "input": "```gantt\ntitle X\n```",
+      "expected": "```mermaid\ntitle X\n```"
+    },
+    {
+      "name": "flow alias",
+      "input": "```flow\nflowchart TD\n```",
+      "expected": "```mermaid\nflowchart TD\n```"
+    },
+    {
+      "name": "tilde fence preserve marker",
+      "input": "~~~sequence\nsequenceDiagram\n```",
+      "expected": "~~~mermaid\nsequenceDiagram\n```"
+    },
+    {
+      "name": "untagged with keyword",
+      "input": "```\nsequenceDiagram\n  A->>B: hi\n```",
+      "expected": "```mermaid\nsequenceDiagram\n  A->>B: hi\n```"
+    },
+    {
+      "name": "untagged without keyword unchanged",
+      "input": "```\njust some plain text\nnot a diagram\n```",
+      "expected": "```\njust some plain text\nnot a diagram\n```"
+    },
+    {
+      "name": "kotlin tagged with flowchart word unchanged",
+      "input": "```kotlin\nflowchart fun build() = 1\n```",
+      "expected": "```kotlin\nflowchart fun build() = 1\n```"
+    },
+    {
+      "name": "text tagged with graph word unchanged",
+      "input": "```text\ngraph this is prose\n```",
+      "expected": "```text\ngraph this is prose\n```"
+    },
+    {
+      "name": "language attribute preserved",
+      "input": "```sequence {#d}\nflowchart LR\n  A --> B\n```",
+      "expected": "```mermaid {#d}\nflowchart LR\n  A --> B\n```"
+    },
+    {
+      "name": "leading indent up to 3 spaces",
+      "input": "  ```sequence\nflowchart LR\n  ```",
+      "expected": "  ```mermaid\nflowchart LR\n  ```"
+    },
+    {
+      "name": "fence-looking line inside code block",
+      "input": "```kotlin\nval s = \"```sequence\"\n```",
+      "expected": "```kotlin\nval s = \"```sequence\"\n```"
+    },
+    {
+      "name": "multiple mixed blocks",
+      "input": "# Doc\n\n```sequence\nsequenceDiagram\n  A->>B: x\n```\n\n```kotlin\nfun main() {}\n```\n\n```gantt\ntitle T\n```",
+      "expected": "# Doc\n\n```mermaid\nsequenceDiagram\n  A->>B: x\n```\n\n```kotlin\nfun main() {}\n```\n\n```mermaid\ntitle T\n```"
+    },
+    {
+      "name": "unterminated runs to EOF",
+      "input": "```sequence\nflowchart LR\n  A --> B",
+      "expected": "```mermaid\nflowchart LR\n  A --> B"
+    },
+    {
+      "name": "empty input",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "name": "close fence shorter than opener unchanged",
+      "input": "````text\n```sequence\n````",
+      "expected": "````text\n```sequence\n````"
+    }
+  ]
+}

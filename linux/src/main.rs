@@ -7,6 +7,9 @@ mod render;
 mod store;
 mod util;
 
+#[cfg(test)]
+mod shared_spec_tests;
+
 use std::sync::{Arc, Mutex};
 
 use gio::prelude::*;

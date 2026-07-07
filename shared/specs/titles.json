@@ -1,0 +1,37 @@
+{
+  "_comment": "Shared golden cases for Titles.fromPath. Recognized markdown exts (case-insensitive): md, markdown, mdown, mkd, mkdown. Only the LAST ext is stripped.",
+  "cases": [
+    {
+      "input": "readme.md",
+      "expected": "readme"
+    },
+    {
+      "input": "/a/b/Notes.MARKDOWN",
+      "expected": "Notes"
+    },
+    {
+      "input": "a.b.md",
+      "expected": "a.b"
+    },
+    {
+      "input": "archive.txt",
+      "expected": "archive.txt"
+    },
+    {
+      "input": "noext",
+      "expected": "noext"
+    },
+    {
+      "input": "",
+      "expected": ""
+    },
+    {
+      "input": "WeChat Files/doc.mdown",
+      "expected": "doc"
+    },
+    {
+      "input": "C:\\Users\\me\\file.md",
+      "expected": "file"
+    }
+  ]
+}
