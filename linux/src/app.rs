@@ -21,39 +21,20 @@ use gtk::{
 };
 use uuid::Uuid;
 
-use crate::render::outline::OutlineItem;
-use crate::render::webview;
-use crate::store::content_hash::sha256_hex;
-use crate::store::doc_info::DocInfo;
-use crate::store::{
+use mdreader_core::context::{AppContext, InitialDoc};
+use mdreader_core::render::outline::OutlineItem;
+use mdreader_core::render::webview;
+use mdreader_core::store::content_hash::sha256_hex;
+use mdreader_core::store::doc_info::DocInfo;
+use mdreader_core::store::{
     cache::DocRepository, session_store::SessionStore, settings_store::SettingsStore,
     theme_store::ThemeStore, zoom_store::ZoomStore,
 };
-use crate::util::date_buckets::{self, DayBucket};
-use crate::util::markdown_ext;
-use crate::util::theme::{resolve_dark, ThemePref};
-use crate::util::titles;
-use crate::util::zoom as zoom_util;
-
-/// Process-wide stores shared across windows.
-pub struct AppContext {
-    pub repo: Arc<DocRepository>,
-    pub zoom_store: Arc<Mutex<ZoomStore>>,
-    pub theme_store: Arc<Mutex<ThemeStore>>,
-    pub session_store: Arc<Mutex<SessionStore>>,
-    pub settings: Arc<Mutex<SettingsStore>>,
-}
-
-pub enum InitialDoc {
-    Sample,
-    File {
-        content: String,
-        title: String,
-        base: Option<PathBuf>,
-        source: Option<String>,
-    },
-    Cached(Uuid),
-}
+use mdreader_core::util::date_buckets::{self, DayBucket};
+use mdreader_core::util::markdown_ext;
+use mdreader_core::util::theme::{resolve_dark, ThemePref};
+use mdreader_core::util::titles;
+use mdreader_core::util::zoom as zoom_util;
 
 struct State {
     app: Application,

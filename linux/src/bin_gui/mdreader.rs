@@ -1,14 +1,8 @@
 // MDreader — native Linux Markdown reader (GTK4 + WebKitGTK6).
+// GUI binary; builds only with the `gui` feature (default). The pure-logic
+// layer lives in the `mdreader_core` lib, shared with the TUI binary.
 
 mod app;
-mod build_info;
-mod config;
-mod render;
-mod store;
-mod util;
-
-#[cfg(test)]
-mod shared_spec_tests;
 
 use std::sync::{Arc, Mutex};
 
@@ -20,13 +14,14 @@ use gtk::{
     Orientation, Window as GtkWindow,
 };
 
-use app::{AppContext, InitialDoc};
-use store::cache::DocRepository;
-use store::session_store::SessionStore;
-use store::settings_store::SettingsStore;
-use store::theme_store::ThemeStore;
-use store::zoom_store::ZoomStore;
-use util::theme::ThemePref;
+use mdreader_core::context::{AppContext, InitialDoc};
+use mdreader_core::store::cache::DocRepository;
+use mdreader_core::store::session_store::SessionStore;
+use mdreader_core::store::settings_store::SettingsStore;
+use mdreader_core::store::theme_store::ThemeStore;
+use mdreader_core::store::zoom_store::ZoomStore;
+use mdreader_core::util::theme::ThemePref;
+use mdreader_core::{build_info, config, render, util};
 
 const APP_ID: &str = "com.mdreader.MDreader";
 

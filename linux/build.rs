@@ -9,19 +9,38 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let shared = manifest
-        .join("..")
-        .join("shared")
-        .canonicalize()
-        .expect("linux/build.rs: ../shared not found (shared/ must be sibling of linux/)");
 
+    // GResource compilation is GUI-only — the TUI doesn't use WebView assets.
+    #[cfg(feature = "gui")]
+    {
+        let shared = manifest
+            .join("..")
+            .join("shared")
+            .canonicalize()
+            .expect("linux/build.rs: ../shared not found (shared/ must be sibling of linux/)");
+        compile_gresource(&manifest, &shared);
+    }
+
+    // Build metadata (mirrors macOS BuildInfo.swift + project.yml preBuildScript). Consumed by
+    // src/build_info.rs via option_env! — shared by both GUI and TUI.
+    println!("cargo:rustc-env=GIT_HASH={}", git_short());
+    println!("cargo:rustc-env=BUILD_TIME={}", build_time());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("..").join(".git").join("HEAD").display()
+    );
+    println!("cargo:rerun-if-changed=build.rs");
+}
+
+#[cfg(feature = "gui")]
+fn compile_gresource(manifest: &Path, shared: &Path) {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // Walk shared/render; register each file under prefix /com/mdreader/MDreader/render/
     // using its bare relative path, so the resource URI of each file equals the path
     // render.js/index.html reference relatively (resource path == relative ref).
     let mut entries: Vec<String> = Vec::new();
-    walk(&shared.join("render"), &shared, &mut entries);
+    walk(&shared.join("render"), shared, &mut entries);
     if shared.join("sample.md").exists() {
         entries.push("sample.md".to_string());
     }
@@ -50,19 +69,9 @@ fn main() {
         "render.gresource",
     );
 
-    // Build metadata (mirrors macOS BuildInfo.swift + project.yml preBuildScript). Consumed by
-    // src/build_info.rs via option_env!.
-    println!("cargo:rustc-env=GIT_HASH={}", git_short());
-    println!("cargo:rustc-env=BUILD_TIME={}", build_time());
-    println!(
-        "cargo:rerun-if-changed={}",
-        manifest.join("..").join(".git").join("HEAD").display()
-    );
-
     println!("cargo:rerun-if-changed={}", shared.join("render").display());
     println!("cargo:rerun-if-changed={}", shared.join("sample.md").display());
     println!("cargo:rerun-if-changed={}", resources_dir.display());
-    println!("cargo:rerun-if-changed=build.rs");
 }
 
 /// Short git hash of HEAD ("dev" if git is unavailable).
