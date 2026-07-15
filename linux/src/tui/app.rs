@@ -182,7 +182,9 @@ fn main_loop(
                 app.list_state.select(Some(0));
             }
             (KeyCode::Char('j') | KeyCode::Down, _) => {
-                if app.side_tab == SideTab::Outline && app.current.is_some()
+                if !app.show_sidebar {
+                    app.scroll_content(1);
+                } else if app.side_tab == SideTab::Outline && app.current.is_some()
                     && (ev.modifiers.contains(KeyModifiers::SHIFT)
                         || app.list_state.selected().map(|i| i >= app.current.as_ref().unwrap().headings.len().saturating_sub(1)).unwrap_or(true))
                 {
@@ -191,7 +193,13 @@ fn main_loop(
                     app.move_selection(1);
                 }
             }
-            (KeyCode::Char('k') | KeyCode::Up, _) => app.move_selection(-1),
+            (KeyCode::Char('k') | KeyCode::Up, _) => {
+                if !app.show_sidebar {
+                    app.scroll_content(-1);
+                } else {
+                    app.move_selection(-1);
+                }
+            }
             (KeyCode::Char('J'), _) => app.scroll_content(3),
             (KeyCode::Char('K'), _) => app.scroll_content(-3),
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
