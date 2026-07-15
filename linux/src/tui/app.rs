@@ -192,8 +192,12 @@ fn main_loop(
             (KeyCode::Char('k') | KeyCode::Up, _) => app.move_selection(-1),
             (KeyCode::Char('J'), _) => app.scroll_content(3),
             (KeyCode::Char('K'), _) => app.scroll_content(-3),
-            (KeyCode::PageDown, _) => app.scroll_content(10),
-            (KeyCode::PageUp, _) => app.scroll_content(-10),
+            (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
+                app.scroll_content(10)
+            }
+            (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
+                app.scroll_content(-10)
+            }
             (KeyCode::Char('G'), _) => {
                 if let Some(d) = &app.current {
                     app.scroll = d.lines.len().saturating_sub(1);
@@ -292,7 +296,7 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
     }
 
     // Bottom bar: help
-    let help = " Tab:库/大纲  j/k:选择  Enter:打开/跳转  J/K:滚动  r:刷新  t:主题  q:退出 ";
+    let help = " Tab:库/大纲  j/k:选择  Enter:打开/跳转  J/K:滚动  Ctrl-f/b:翻页  r:刷新  t:主题  q:退出 ";
     let bottom = Paragraph::new(help).style(Style::default().fg(Color::DarkGray));
     f.render_widget(bottom, chunks[2]);
 }
