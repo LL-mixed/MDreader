@@ -456,105 +456,37 @@ fn render_table(lines: &mut Vec<Line<'static>>, rows: &[Vec<String>], _aligns: &
     lines.push(Line::raw(border));
 }
 
-/// Max content width for a code block before we stop drawing the right border
-/// (avoids pushing the closing │ far off-screen on long lines).
-/// Max content width for a code block before we stop drawing the right border
-/// (avoids pushing the closing │ far off-screen on long lines).
-const CODE_MAX_WIDTH: usize = 76;
-
-/// Render a fenced code block as a bordered box with an adaptive title bar
-/// showing the language. The box width follows the widest code line (up to
-/// `CODE_MAX_WIDTH`); lines longer than the cap keep only the left border so
-/// they wrap cleanly instead of misaligning the right edge.
-///
-/// Width model: `inner_w` is the content area between the borders. Each line is
-/// `{indent}│ {content padded to inner_w} │`, so the total box is
-/// `indent.len() + inner_w + 4` columns. Top/bottom borders use the same
-/// `inner_w`, with the language label embedded in the top dashes.
+/// Render a fenced code block with a left rule and a language label, open on
+/// the right. No right border or column padding is drawn: terminal character
+/// widths (CJK, emoji ZWJ sequences, combining marks) cannot be reliably
+/// predicted from code-point counting, so any computed right edge would
+/// misalign. `bat`/`glow` use the same open-righted style.
 fn render_code_block(lines: &mut Vec<Line<'static>>, code: &str, lang: Option<&str>) {
     let border = Style::default().fg(Color::DarkGray);
-    let body_color = Color::Cyan;
+    let body = Style::default().fg(Color::Cyan);
     let indent = "  ";
-
-    let raw_lines: Vec<&str> = code.lines().collect();
-    // Content area width = widest line by terminal display width (CJK = 2 cols),
-    // capped so the box doesn't sprawl. Must also fit the language label.
-    let widest = raw_lines
-        .iter()
-        .map(|l| UnicodeWidthStr::width(*l))
-        .max()
-        .unwrap_or(0);
     let label = lang.unwrap_or("");
-    let label_w = label.chars().count();
-    // The label sits between two spaces inside the top border, so it needs
-    // at least label_w + 2 columns to look right.
-    let inner_w = widest.min(CODE_MAX_WIDTH).max(if label_w > 0 { label_w + 2 } else { 0 });
 
-    // Top border: ┌─ lang ──…──┐  (or ┌──…──┐ with no label).
-    lines.push(code_top_border(indent, label, inner_w, border));
-
-    // Body lines.
-    for raw in &raw_lines {
-        let line_w = UnicodeWidthStr::width(*raw);
-        let mut spans: Vec<Span<'static>> = vec![Span::styled(format!("{}│ ", indent), border)];
-
-        if line_w > CODE_MAX_WIDTH {
-            // Too wide: render as-is without right border (wraps naturally).
-            spans.push(Span::styled((*raw).to_string(), Style::default().fg(body_color)));
-            lines.push(Line::from(spans));
-            continue;
-        }
-
-        spans.push(Span::styled(
-            (*raw).to_string(),
-            Style::default().fg(body_color),
-        ));
-        // Right-pad to inner_w so the closing │ aligns.
-        if line_w < inner_w {
-            spans.push(Span::raw(" ".repeat(inner_w - line_w)));
-        }
-        spans.push(Span::styled(" │", border));
-        lines.push(Line::from(spans));
-    }
-
-    // Bottom border: └──…──┘
-    lines.push(Line::from(vec![
-        Span::styled(format!("{}└", indent), border),
-        Span::styled("─".repeat(inner_w + 2), border),
-        Span::styled("┘", border),
-    ]));
-
-    lines.push(Line::raw(""));
-}
-
-/// Build the top border as spans so the language label can be colored.
-/// The dashes span `inner_w + 2` columns total (matching the body), split as:
-///   with label:  `─ ` + label + ` ` + `(remaining dashes)`
-///   without:     all dashes
-fn code_top_border(indent: &str, label: &str, inner_w: usize, border: Style) -> Line<'static> {
-    let dash_total = inner_w + 2; // columns between ┌ and ┐
-    if label.is_empty() {
-        return Line::from(vec![
-            Span::styled(format!("{}┌", indent), border),
-            Span::styled("─".repeat(dash_total), border),
-            Span::styled("┐", border),
-        ]);
-    }
-    // Layout: ┌─ label ──…──┐
-    // Consume "─ " (2) + label_w + " " (1) from dash_total, rest is dashes.
-    let label_w = label.chars().count();
-    let leading = "─ ".to_string();
-    let after_label_space = " ";
-    let remaining = dash_total.saturating_sub(2 + label_w + 1);
-    Line::from(vec![
-        Span::styled(format!("{}┌", indent), border),
-        Span::styled(leading, border),
-        Span::styled(
+    // Top: ┌─ lang  (or ┌── with no label)
+    let mut top: Vec<Span<'static>> = vec![Span::styled(format!("{}┌─", indent), border)];
+    if !label.is_empty() {
+        top.push(Span::raw(" "));
+        top.push(Span::styled(
             label.to_string(),
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(after_label_space, border),
-        Span::styled("─".repeat(remaining), border),
-        Span::styled("┐", border),
-    ])
+        ));
+    }
+    lines.push(Line::from(top));
+
+    // Body: │ <line>
+    for raw in code.lines() {
+        lines.push(Line::from(vec![
+            Span::styled(format!("{}│ ", indent), border),
+            Span::styled(raw.to_string(), body),
+        ]));
+    }
+
+    // Bottom: └─
+    lines.push(Line::from(vec![Span::styled(format!("{}└─", indent), border)]));
+    lines.push(Line::raw(""));
 }
