@@ -40,6 +40,7 @@ pub struct App {
     pub docs: Vec<DocInfo>,
     selected_doc: Option<usize>,   // index into docs
     side_tab: SideTab,
+    show_sidebar: bool,
     pub list_state: ListState,
     current: Option<CurrentDoc>,
     scroll: usize,
@@ -53,6 +54,7 @@ impl App {
             docs,
             selected_doc: None,
             side_tab: SideTab::Library,
+            show_sidebar: true,
             list_state: ListState::default(),
             current: None,
             scroll: 0,
@@ -211,6 +213,7 @@ fn main_loop(
                 }
             }
             (KeyCode::Char('t'), _) => app.toggle_theme(),
+            (KeyCode::Char('o'), _) => app.show_sidebar = !app.show_sidebar,
             (KeyCode::Char('?'), _) => { /* TODO: help overlay */ }
             _ => {}
         }
@@ -240,44 +243,50 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
         .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
     f.render_widget(top, chunks[0]);
 
-    // Main split: sidebar (30%) | content (70%)
-    let main = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(chunks[1]);
+    // Main split: sidebar (30%) | content (70%), or content fills when sidebar hidden.
+    let content_area = if app.show_sidebar {
+        let main = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+            .split(chunks[1]);
 
-    // Sidebar: tabs (库/大纲) + list
-    let sidebar_block = Block::default().borders(Borders::RIGHT);
-    let sidebar_inner = sidebar_block.inner(main[0]);
-    f.render_widget(sidebar_block, main[0]);
+        // Sidebar: tabs (库/大纲) + list
+        let sidebar_block = Block::default().borders(Borders::RIGHT);
+        let sidebar_inner = sidebar_block.inner(main[0]);
+        f.render_widget(sidebar_block, main[0]);
 
-    let tab_titles = vec![
-        Span::raw(if app.side_tab == SideTab::Library { "[库] " } else { " 库  " }),
-        Span::raw(if app.side_tab == SideTab::Outline { "[大纲]" } else { " 大纲" }),
-    ];
-    let tabs = Tabs::new(tab_titles);
-    let sidebar_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1)])
-        .split(sidebar_inner);
-    f.render_widget(tabs, sidebar_chunks[0]);
+        let tab_titles = vec![
+            Span::raw(if app.side_tab == SideTab::Library { "[库] " } else { " 库  " }),
+            Span::raw(if app.side_tab == SideTab::Outline { "[大纲]" } else { " 大纲" }),
+        ];
+        let tabs = Tabs::new(tab_titles);
+        let sidebar_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(sidebar_inner);
+        f.render_widget(tabs, sidebar_chunks[0]);
 
-    // List content depends on active tab (clone items out to release the borrow
-    // before we mutably borrow list_state for rendering).
-    let items: Vec<ListItem> = match app.side_tab {
-        SideTab::Library => build_library_items(app),
-        SideTab::Outline => build_outline_items(app),
+        // List content depends on active tab (clone items out to release the borrow
+        // before we mutably borrow list_state for rendering).
+        let items: Vec<ListItem> = match app.side_tab {
+            SideTab::Library => build_library_items(app),
+            SideTab::Outline => build_outline_items(app),
+        };
+        let list = List::new(items)
+            .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
+        let mut list_state = app.list_state.clone();
+        f.render_stateful_widget(list, sidebar_chunks[1], &mut list_state);
+        app.list_state = list_state;
+
+        main[1]
+    } else {
+        chunks[1]
     };
-    let list = List::new(items)
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD));
-    let mut list_state = app.list_state.clone();
-    f.render_stateful_widget(list, sidebar_chunks[1], &mut list_state);
-    app.list_state = list_state;
 
     // Content area
     let content_block = Block::default();
-    let content_inner = content_block.inner(main[1]);
-    f.render_widget(content_block, main[1]);
+    let content_inner = content_block.inner(content_area);
+    f.render_widget(content_block, content_area);
 
     if let Some(doc) = &app.current {
         let visible: Vec<Line> = doc
@@ -296,7 +305,7 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
     }
 
     // Bottom bar: help
-    let help = " Tab:库/大纲  j/k:选择  Enter:打开/跳转  J/K:滚动  Ctrl-f/b:翻页  r:刷新  t:主题  q:退出 ";
+    let help = " Tab:库/大纲  o:隐藏/显示侧栏  j/k:选择  Enter:打开/跳转  J/K:滚动  Ctrl-f/b:翻页  r:刷新  t:主题  q:退出 ";
     let bottom = Paragraph::new(help).style(Style::default().fg(Color::DarkGray));
     f.render_widget(bottom, chunks[2]);
 }
