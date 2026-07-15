@@ -43,7 +43,7 @@ MDreader/
 ├── shared/                  # 跨端 common，唯一来源
 │   ├── render/              # index.html render.js render.css marked/highlight/katex/mermaid
 │   └── sample.md
-├── docs/  tools/  .gitignore  CLAUDE.md
+├── docs/  tools/  .gitignore  AGENT.md
 ```
 
 ## 资源共享机制（解决 DRY）
@@ -86,9 +86,9 @@ MDreader/
 ## 本次交付范围
 
 - macOS **MM1**（工程骨架可构建）+ **MM2**（WKWebView 加载 shared/render 渲染 sample.md）——MM2 验证复用架构真成立。
-- Swift 工具逻辑配 `XCTest` 单测（对应 CLAUDE.md「任何功能都要有测试」）。
+- Swift 工具逻辑配 `XCTest` 单测（对应 AGENT.md「任何功能都要有测试」）。
 - MM3–MM6（文件打开者/缓存层/内容管理/图标发布）作为后续里程碑。
 
-## CLAUDE.md 同步更新
+## AGENT.md 同步更新
 
 目录结构改 monorepo、技术栈表加 macOS 行、构建命令分平台、新增 macOS 里程碑。

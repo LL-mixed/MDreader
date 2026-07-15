@@ -9,7 +9,7 @@
 #      避免 DerivedData 哈希目录漂移）
 #   4. 清空并重建 macos/outputs/
 #   5. 拷贝 .app + .dSYM（调试符号，便于崩溃排查）
-#   6. hdiutil 打一个 DMG（macOS 分发惯例，对齐 CLAUDE.md MM6「Release .app / DMG」）
+#   6. hdiutil 打一个 DMG（macOS 分发惯例，对齐 AGENT.md MM6「Release .app / DMG」）
 #
 # 产物：
 #   macos/outputs/MDreader.app

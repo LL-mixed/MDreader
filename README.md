@@ -99,4 +99,4 @@ MDreader/
 └── docs/       # 设计文档
 ```
 
-详细约定见 [CLAUDE.md](CLAUDE.md)。
+详细约定见 [AGENT.md](AGENT.md)。

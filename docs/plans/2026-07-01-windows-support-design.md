@@ -124,6 +124,6 @@ windows/
 ## 跨端影响（文档/工程需同步）
 
 - `shared/render/`：**零改动**（核心红利）。
-- `CLAUDE.md`：技术决策表加 Windows 行；新增「Windows 里程碑 WM1–WM6」段；目录结构图加 `windows/`。
+- `AGENT.md`：技术决策表加 Windows 行；新增「Windows 里程碑 WM1–WM6」段；目录结构图加 `windows/`。
 - `README.md`：平台表加 Windows 一行；新增「Windows」一节（构建/安装命令）。
 - `.gitignore`：加 `windows/**/bin/`、`windows/**/obj/`、`windows/**/*.user`、`windows/publish/`。

@@ -41,7 +41,7 @@
 
 ```
 MDreader/
-├── CLAUDE.md                      # 本文件：项目约定
+├── AGENT.md                       # 本文件：项目约定
 ├── android/                       # Android 工程（完整 Gradle，独立根）
 │   ├── settings.gradle.kts
 │   ├── build.gradle.kts
