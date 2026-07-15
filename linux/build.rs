@@ -4,8 +4,11 @@
 // are picked up automatically — no hand-maintained list.
 
 use std::env;
+#[cfg(feature = "gui")]
 use std::fs;
-use std::path::{Path, PathBuf};
+#[cfg(feature = "gui")]
+use std::path::Path;
+use std::path::PathBuf;
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
@@ -98,6 +101,7 @@ fn build_time() -> String {
         .unwrap_or_else(|| "dev".to_string())
 }
 
+#[cfg(feature = "gui")]
 fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
     let rd = match fs::read_dir(dir) {
         Ok(r) => r,

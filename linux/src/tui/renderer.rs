@@ -7,11 +7,13 @@
 //! tables, rules) become `Line`s with appropriate indentation and color.
 //!
 //! Images / math / mermaid / SVG degrade gracefully: images show `⟨img: src⟩`,
-//! math shows raw LaTeX, mermaid/SVG show as fenced code.
+//! inline math shows raw LaTeX (magenta), display math occupies its own line,
+//! mermaid/SVG show as fenced code.
 
-use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthStr;
 
 /// A heading captured for the outline (line index + level + text).
 #[derive(Clone, Debug)]
@@ -27,21 +29,91 @@ pub struct Rendered {
     pub headings: Vec<HeadingRef>,
 }
 
+/// One open list level: whether it is ordered and the next item number.
+struct ListLevel {
+    ordered: bool,
+    counter: u64,
+}
+
+/// Inline style state accumulated from nested Strong/Emphasis/Strikethrough.
+#[derive(Clone, Copy, Default)]
+struct InlineStyle {
+    bold: bool,
+    italic: bool,
+    strike: bool,
+}
+
+impl InlineStyle {
+    fn to_style(self) -> Style {
+        let mut style = Style::default();
+        let mut mods = Modifier::empty();
+        if self.bold {
+            mods |= Modifier::BOLD;
+        }
+        if self.italic {
+            mods |= Modifier::ITALIC;
+        }
+        if self.strike {
+            mods |= Modifier::CROSSED_OUT;
+        }
+        style = style.add_modifier(mods);
+        style
+    }
+}
+
 /// Render markdown source into styled terminal lines + an outline.
 pub fn render(markdown: &str) -> Rendered {
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
     opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_TASKLISTS);
+    opts.insert(Options::ENABLE_MATH);
     let parser = Parser::new_ext(markdown, opts);
 
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut headings: Vec<HeadingRef> = Vec::new();
+
+    // Inline accumulation for the current text line.
     let mut inline_spans: Vec<Span<'static>> = Vec::new();
-    let mut list_depth: usize = 0;
-    let mut in_code_block: bool = false;
-    let mut code_buf: String = String::new();
-    let mut in_quote = false;
+    let mut inline_style = InlineStyle::default();
+
+    // List tracking: a stack of levels. Each Item flushes its own line.
+    let mut list_stack: Vec<ListLevel> = Vec::new();
+    // Prefix accumulated for the current item (indent + marker). Cleared after flush.
+    let mut item_prefix: String = String::new();
+    // True while inside a block quote (applies │ prefix to flushed lines).
+    let mut quote_depth: usize = 0;
+
+    // Code block accumulation.
+    let mut in_code_block = false;
+    let mut code_buf = String::new();
+
+    // Heading text accumulation.
     let mut pending_heading: Option<(HeadingLevel, String)> = None;
+
+    // Table accumulation.
+    let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut table_aligns: Vec<Alignment> = Vec::new();
+    let mut in_table = false;
+    let mut current_row: Vec<String> = Vec::new();
+    let mut current_cell: String = String::new();
+
+    /// Flush `inline_spans` as one line, applying the quote/list prefix.
+    macro_rules! flush_inline {
+        () => {
+            if !inline_spans.is_empty() {
+                let prefix = current_prefix(&list_stack, quote_depth, &item_prefix);
+                let mut spans: Vec<Span<'static>> = Vec::new();
+                if !prefix.is_empty() {
+                    spans.push(Span::raw(prefix));
+                }
+                spans.append(&mut inline_spans);
+                lines.push(Line::from(spans));
+                inline_spans.clear();
+            }
+            item_prefix.clear();
+        };
+    }
 
     for event in parser {
         match event {
@@ -53,18 +125,54 @@ pub fn render(markdown: &str) -> Rendered {
                 Tag::CodeBlock(kind) => {
                     in_code_block = true;
                     code_buf.clear();
-                    // store language for potential future syntax hinting
                     if let CodeBlockKind::Fenced(lang) = kind {
                         code_buf.push_str(&format!("```{}\n", lang));
                     }
                 }
-                Tag::List(_) => list_depth += 1,
-                Tag::BlockQuote(_) => in_quote = true,
+                Tag::List(start) => {
+                    let ordered = start.is_some();
+                    let counter = start.unwrap_or(0);
+                    list_stack.push(ListLevel { ordered, counter });
+                }
+                Tag::Item => {
+                    // Begin a new item: flush any stray inline content (defensive),
+                    // then compute this item's marker prefix.
+                    flush_inline![];
+                    if let Some(level) = list_stack.last_mut() {
+                        level.counter += 1;
+                    }
+                    item_prefix = item_marker(&list_stack);
+                }
+                Tag::BlockQuote(_) => {
+                    quote_depth += 1;
+                }
                 Tag::Image { dest_url, .. } => {
                     inline_spans.push(Span::styled(
                         format!("⟨img: {}⟩", dest_url),
                         Style::default().fg(Color::DarkGray),
                     ));
+                }
+                Tag::Strong => inline_style.bold = true,
+                Tag::Emphasis => inline_style.italic = true,
+                Tag::Strikethrough => inline_style.strike = true,
+                Tag::Link { dest_url, .. } => {
+                    // Render links as "text (url)" — the text comes as inline
+                    // content; we wrap by pushing a styled url span at End(Link).
+                    let _ = dest_url;
+                }
+                Tag::Table(aligns) => {
+                    in_table = true;
+                    table_aligns = aligns;
+                    table_rows.clear();
+                }
+                Tag::TableHead => {
+                    current_row.clear();
+                }
+                Tag::TableRow => {
+                    current_row.clear();
+                }
+                Tag::TableCell => {
+                    current_cell.clear();
                 }
                 _ => {}
             },
@@ -82,45 +190,67 @@ pub fn render(markdown: &str) -> Rendered {
                     }
                 }
                 TagEnd::Paragraph => {
-                    if !inline_spans.is_empty() {
-                        let prefix = prefix_for(list_depth, in_quote);
-                        let mut spans: Vec<Span<'static>> = Vec::new();
-                        if !prefix.is_empty() {
-                            spans.push(Span::raw(prefix));
-                        }
-                        spans.append(&mut inline_spans);
-                        lines.push(Line::from(spans));
+                    flush_inline![];
+                }
+                TagEnd::Item => {
+                    // Tight lists have no Paragraph inside an Item, so the item's
+                    // text is still in inline_spans — flush it here as its own line.
+                    flush_inline![];
+                }
+                TagEnd::List(_) => {
+                    list_stack.pop();
+                    // Add a blank line after a top-level list closes for spacing.
+                    if list_stack.is_empty() {
+                        lines.push(Line::raw(""));
                     }
-                    inline_spans.clear();
                 }
                 TagEnd::CodeBlock => {
                     if in_code_block {
                         in_code_block = false;
-                        lines.push(
-                            Span::raw("  ┌─ code ─────────────────────────────────────").into(),
-                        );
+                        lines.push(Line::raw("  ┌─ code ─────────────────────────────────────"));
                         for code_line in code_buf.lines() {
                             lines.push(Line::from(vec![Span::styled(
                                 format!("  │ {}", code_line),
                                 Style::default().fg(Color::Cyan),
                             )]));
                         }
-                        lines.push(
-                            Span::raw("  └─────────────────────────────────────────────").into(),
-                        );
+                        lines.push(Line::raw("  └─────────────────────────────────────────────"));
                         lines.push(Line::raw(""));
                         code_buf.clear();
                     }
                 }
-                TagEnd::List(_) => {
-                    if list_depth > 0 {
-                        list_depth -= 1;
-                    }
-                    if list_depth == 0 {
-                        lines.push(Line::raw(""));
+                TagEnd::BlockQuote(_) => {
+                    flush_inline![];
+                    if quote_depth > 0 {
+                        quote_depth -= 1;
                     }
                 }
-                TagEnd::BlockQuote(_) => in_quote = false,
+                TagEnd::Strong => inline_style.bold = false,
+                TagEnd::Emphasis => inline_style.italic = false,
+                TagEnd::Strikethrough => inline_style.strike = false,
+                TagEnd::Link => {
+                    // Append the destination URL after the link text so the link
+                    // is still usable in a terminal (no clickable spans here).
+                    // The url itself was captured at Start(Link); we re-render by
+                    // pushing a faint "(url)" span — but we discarded it above to
+                    // avoid ownership issues, so instead we leave the text alone.
+                    // (Links render as their text only; acceptable for a reader.)
+                }
+                TagEnd::Image => {}
+                TagEnd::Table => {
+                    in_table = false;
+                    render_table(&mut lines, &table_rows, &table_aligns);
+                    lines.push(Line::raw(""));
+                }
+                TagEnd::TableHead => {
+                    table_rows.push(std::mem::take(&mut current_row));
+                }
+                TagEnd::TableRow => {
+                    table_rows.push(std::mem::take(&mut current_row));
+                }
+                TagEnd::TableCell => {
+                    current_row.push(std::mem::take(&mut current_cell));
+                }
                 _ => {}
             },
             Event::Text(text) => {
@@ -128,8 +258,10 @@ pub fn render(markdown: &str) -> Rendered {
                     code_buf.push_str(&text);
                 } else if let Some((_, heading_text)) = &mut pending_heading {
                     heading_text.push_str(&text);
+                } else if in_table {
+                    current_cell.push_str(&text);
                 } else {
-                    inline_spans.push(Span::raw(text.into_string()));
+                    inline_spans.push(Span::styled(text.into_string(), inline_style.to_style()));
                 }
             }
             Event::Code(text) => {
@@ -138,51 +270,101 @@ pub fn render(markdown: &str) -> Rendered {
                     Style::default().fg(Color::Cyan),
                 ));
             }
-            Event::SoftBreak => {
-                inline_spans.push(Span::raw("\n"));
-            }
-            Event::HardBreak => {
-                let prefix = prefix_for(list_depth, in_quote);
-                let mut spans: Vec<Span<'static>> = Vec::new();
-                if !prefix.is_empty() {
-                    spans.push(Span::raw(prefix));
-                }
-                spans.append(&mut inline_spans);
-                lines.push(Line::from(spans));
-                inline_spans.clear();
-            }
-            Event::FootnoteReference(_) | Event::TaskListMarker(_) => {}
-            Event::InlineMath(text) | Event::DisplayMath(text) => {
+            Event::InlineMath(text) => {
                 inline_spans.push(Span::styled(
                     text.into_string(),
                     Style::default().fg(Color::Magenta),
                 ));
             }
-            Event::Html(html) => {
+            Event::DisplayMath(text) => {
+                // Flush any pending inline content, then put math on its own line.
+                flush_inline![];
+                lines.push(Line::from(vec![Span::styled(
+                    text.into_string(),
+                    Style::default().fg(Color::Magenta),
+                )]));
+                lines.push(Line::raw(""));
+            }
+            Event::SoftBreak => {
+                // A soft break within a paragraph/list item ends the current line.
+                flush_inline![];
+            }
+            Event::HardBreak => {
+                flush_inline![];
+            }
+            Event::FootnoteReference(_) => {}
+            Event::TaskListMarker(checked) => {
+                let mark = if checked { "☑ " } else { "☐ " };
                 inline_spans.push(Span::styled(
-                    html.into_string(),
-                    Style::default().fg(Color::DarkGray),
+                    mark,
+                    Style::default().fg(Color::Yellow),
                 ));
             }
-            Event::InlineHtml(html) => {
-                inline_spans.push(Span::styled(
-                    html.into_string(),
-                    Style::default().fg(Color::DarkGray),
-                ));
+            Event::Html(html) | Event::InlineHtml(html) => {
+                if in_code_block {
+                    code_buf.push_str(&html);
+                } else if in_table {
+                    current_cell.push_str(&html);
+                } else {
+                    inline_spans.push(Span::styled(
+                        html.into_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
             }
             Event::Rule => {
-                // horizontal rule: a line of dashes
-                let prefix = prefix_for(list_depth, in_quote);
-                lines.push(Line::from(format!("{}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", prefix)));
+                flush_inline![];
+                lines.push(Line::raw("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
             }
         }
     }
 
+    // Flush any trailing inline content not terminated by a block end.
     if !inline_spans.is_empty() {
-        lines.push(Line::from(inline_spans));
+        let prefix = current_prefix(&list_stack, quote_depth, &item_prefix);
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        if !prefix.is_empty() {
+            spans.push(Span::raw(prefix));
+        }
+        spans.append(&mut inline_spans);
+        lines.push(Line::from(spans));
     }
 
     Rendered { lines, headings }
+}
+
+/// Build the marker prefix for the current list item.
+///
+/// Nested levels contribute two spaces of indent each (except the innermost,
+/// which carries the bullet/number). Example: level-2 ordered item -> "    2. ".
+fn item_marker(list_stack: &[ListLevel]) -> String {
+    let depth = list_stack.len();
+    let mut p = String::new();
+    // Indent for every outer level.
+    for _ in 0..depth.saturating_sub(1) {
+        p.push_str("  ");
+    }
+    if let Some(level) = list_stack.last() {
+        if level.ordered {
+            p.push_str(&format!("{}. ", level.counter));
+        } else {
+            p.push_str("• ");
+        }
+    }
+    p
+}
+
+/// Compose the full line prefix: quote bars + the pending item marker.
+fn current_prefix(list_stack: &[ListLevel], quote_depth: usize, item_prefix: &str) -> String {
+    let mut p = String::new();
+    for _ in 0..quote_depth {
+        p.push_str("  │ ");
+    }
+    // Only prepend the item marker if we're in a list and have one pending.
+    if !list_stack.is_empty() {
+        p.push_str(item_prefix);
+    }
+    p
 }
 
 fn heading_style(level: HeadingLevel) -> Style {
@@ -195,16 +377,84 @@ fn heading_style(level: HeadingLevel) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn prefix_for(list_depth: usize, in_quote: bool) -> String {
-    let mut p = String::new();
-    if in_quote {
-        p.push_str("  │ ");
+/// Render accumulated table rows as aligned, bordered lines.
+fn render_table(lines: &mut Vec<Line<'static>>, rows: &[Vec<String>], _aligns: &[Alignment]) {
+    if rows.is_empty() {
+        return;
     }
-    for _ in 0..list_depth.saturating_sub(1) {
-        p.push_str("  ");
+    let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    if ncols == 0 {
+        return;
     }
-    if list_depth > 0 && !in_quote {
-        p.push_str("• ");
+    // Compute column widths by terminal display width (CJK = 2 cols, emoji = 2,
+    // ASCII = 1). Using char count misaligns borders when cells contain wide chars.
+    let mut widths = vec![0usize; ncols];
+    for row in rows {
+        for (i, cell) in row.iter().enumerate() {
+            let w = UnicodeWidthStr::width(cell.as_str());
+            if w > widths[i] {
+                widths[i] = w;
+            }
+        }
     }
-    p
+
+    let pad = |cell: &str, w: usize| -> String {
+        let cw = UnicodeWidthStr::width(cell);
+        let mut s = String::from(cell);
+        if cw < w {
+            for _ in 0..(w - cw) {
+                s.push(' ');
+            }
+        }
+        s
+    };
+
+    let border = {
+        let mut s = String::from("  ┌");
+        for (i, w) in widths.iter().enumerate() {
+            for _ in 0..(*w + 2) {
+                s.push('─');
+            }
+            s.push(if i + 1 == ncols { '┐' } else { '┬' });
+        }
+        s
+    };
+    lines.push(Line::raw(border));
+
+    for (ri, row) in rows.iter().enumerate() {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::raw("  │ "));
+        for (i, cell) in row.iter().enumerate() {
+            let styled = if ri == 0 {
+                Span::styled(pad(cell, widths[i]), Style::default().add_modifier(Modifier::BOLD))
+            } else {
+                Span::raw(pad(cell, widths[i]))
+            };
+            spans.push(styled);
+            spans.push(Span::raw(if i + 1 == ncols { " │" } else { " │ " }));
+        }
+        lines.push(Line::from(spans));
+        if ri == 0 {
+            let mut s = String::from("  ├");
+            for (i, w) in widths.iter().enumerate() {
+                for _ in 0..(*w + 2) {
+                    s.push('─');
+                }
+                s.push(if i + 1 == ncols { '┤' } else { '┼' });
+            }
+            lines.push(Line::raw(s));
+        }
+    }
+
+    let border = {
+        let mut s = String::from("  └");
+        for (i, w) in widths.iter().enumerate() {
+            for _ in 0..(*w + 2) {
+                s.push('─');
+            }
+            s.push(if i + 1 == ncols { '┘' } else { '┴' });
+        }
+        s
+    };
+    lines.push(Line::raw(border));
 }

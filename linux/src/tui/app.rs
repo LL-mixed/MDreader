@@ -43,7 +43,6 @@ pub struct App {
     pub list_state: ListState,
     current: Option<CurrentDoc>,
     scroll: usize,
-    search: Option<String>,
 }
 
 impl App {
@@ -57,7 +56,6 @@ impl App {
             list_state: ListState::default(),
             current: None,
             scroll: 0,
-            search: None,
         };
         app.list_state.select(Some(0));
         app
