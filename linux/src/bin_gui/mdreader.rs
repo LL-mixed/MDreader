@@ -3,6 +3,7 @@
 // layer lives in the `mdreader_core` lib, shared with the TUI binary.
 
 mod app;
+mod render;
 
 use std::sync::{Arc, Mutex};
 
@@ -21,7 +22,7 @@ use mdreader_core::store::settings_store::SettingsStore;
 use mdreader_core::store::theme_store::ThemeStore;
 use mdreader_core::store::zoom_store::ZoomStore;
 use mdreader_core::util::theme::ThemePref;
-use mdreader_core::{build_info, config, render, util};
+use mdreader_core::{build_info, config, util};
 
 const APP_ID: &str = "com.mdreader.MDreader";
 

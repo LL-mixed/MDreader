@@ -23,7 +23,7 @@ use uuid::Uuid;
 
 use mdreader_core::context::{AppContext, InitialDoc};
 use mdreader_core::render::outline::OutlineItem;
-use mdreader_core::render::webview;
+use crate::webview;
 use mdreader_core::store::content_hash::sha256_hex;
 use mdreader_core::store::doc_info::DocInfo;
 use mdreader_core::store::{
