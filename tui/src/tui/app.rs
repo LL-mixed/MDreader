@@ -43,7 +43,14 @@ pub struct App {
     show_sidebar: bool,
     pub list_state: ListState,
     current: Option<CurrentDoc>,
+    /// Physical-line scroll offset (after wrapping to terminal width).
     scroll: usize,
+    /// Cache of wrapped physical lines, recomputed in draw() when width changes.
+    wrapped: Vec<Line<'static>>,
+    /// Maps logical-line index → first physical-line index (for heading jumps).
+    logical_to_physical: Vec<usize>,
+    /// The content width last wrapped at (to detect resize and re-wrap).
+    last_wrap_width: u16,
 }
 
 impl App {
@@ -58,6 +65,9 @@ impl App {
             list_state: ListState::default(),
             current: None,
             scroll: 0,
+            wrapped: Vec::new(),
+            logical_to_physical: Vec::new(),
+            last_wrap_width: 0,
         };
         app.list_state.select(Some(0));
         app
@@ -104,7 +114,8 @@ impl App {
         if self.current.is_none() {
             return;
         }
-        let total = self.current.as_ref().unwrap().lines.len() as i32;
+        // Scroll in physical (wrapped) lines; clamp to the wrapped line count.
+        let total = self.wrapped.len() as i32;
         let next = self.scroll as i32 + delta;
         self.scroll = next.max(0).min(total.saturating_sub(1)) as usize;
     }
@@ -115,9 +126,15 @@ impl App {
             None => return,
         };
         if self.side_tab == SideTab::Outline {
+            // Map the heading's logical line → physical line via the cached map.
             if let Some(doc) = &self.current {
                 if let Some(h) = doc.headings.get(idx) {
-                    self.scroll = h.line_index;
+                    let phys = self
+                        .logical_to_physical
+                        .get(h.line_index)
+                        .copied()
+                        .unwrap_or(0);
+                    self.scroll = phys;
                 }
             }
         } else {
@@ -209,8 +226,8 @@ fn main_loop(
                 app.scroll_content(-10)
             }
             (KeyCode::Char('G'), _) => {
-                if let Some(d) = &app.current {
-                    app.scroll = d.lines.len().saturating_sub(1);
+                if app.current.is_some() {
+                    app.scroll = app.wrapped.len().saturating_sub(1);
                 }
             }
             (KeyCode::Char('g'), _) => app.scroll = 0,
@@ -296,9 +313,21 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
     let content_inner = content_block.inner(content_area);
     f.render_widget(content_block, content_area);
 
-    if let Some(doc) = &app.current {
-        let visible: Vec<Line> = doc
-            .lines
+    if app.current.is_some() {
+        // Re-wrap only when the content width changed (resize or first draw).
+        let width = content_inner.width.max(1) as usize;
+        if width as u16 != app.last_wrap_width {
+            let (wrapped, map) = wrap_all(&app.current.as_ref().unwrap().lines, width);
+            app.wrapped = wrapped;
+            app.logical_to_physical = map;
+            app.last_wrap_width = width as u16;
+            // clamp scroll into the new physical range
+            if app.scroll >= app.wrapped.len() {
+                app.scroll = app.wrapped.len().saturating_sub(1);
+            }
+        }
+        let visible: Vec<Line> = app
+            .wrapped
             .iter()
             .skip(app.scroll)
             .take(content_inner.height as usize)
@@ -362,5 +391,112 @@ fn build_outline_items(app: &App) -> Vec<ListItem> {
             }
         }
         None => vec![ListItem::new("（未打开文档）")],
+    }
+}
+
+/// Wrap logical lines to a content width, returning physical lines + a
+/// logical-index → physical-index map (first physical line of each logical line).
+///
+/// Width-aware wrapping so long lines/paragraphs fold to fit the terminal no
+/// matter how wide it is. Continuation lines are indented to align with the
+/// first line's text (after any list/quote prefix), but don't repeat the prefix.
+fn wrap_all(logical: &[Line<'static>], width: usize) -> (Vec<Line<'static>>, Vec<usize>) {
+    use unicode_width::UnicodeWidthStr;
+    let mut physical: Vec<Line<'static>> = Vec::new();
+    let mut map: Vec<usize> = Vec::with_capacity(logical.len());
+
+    for line in logical {
+        map.push(physical.len()); // this logical line starts at current physical length
+
+        // Measure the whole line's text. If it already fits, keep as-is.
+        let total_width: usize = line.spans.iter().map(|s| UnicodeWidthStr::width(s.content.as_ref())).sum();
+        if total_width <= width || width == 0 {
+            physical.push(line.clone());
+            continue;
+        }
+
+        // Word-wrap: flatten spans into (text, style) words, then pack into lines.
+        // We tokenize on spaces, carrying each word's source span style.
+        let mut words: Vec<(String, Style)> = Vec::new();
+        for span in &line.spans {
+            let style = span.style;
+            for w in span.content.split(' ') {
+                words.push((w.to_string(), style));
+            }
+        }
+
+        let mut cur_spans: Vec<Span<'static>> = Vec::new();
+        let mut cur_width: usize = 0;
+        let mut first_word = true;
+
+        for (word, style) in words {
+            let word_w = UnicodeWidthStr::width(word.as_str());
+            let need_space = if first_word { 0 } else { 1 };
+            if cur_width + need_space + word_w > width && !cur_spans.is_empty() {
+                physical.push(Line::from(std::mem::take(&mut cur_spans)));
+                cur_width = 0;
+                first_word = true;
+            }
+            // join space (unless at line start)
+            if !first_word && cur_width > 0 {
+                cur_spans.push(Span::raw(" "));
+                cur_width += 1;
+            }
+            if !word.is_empty() {
+                cur_spans.push(Span::styled(word.clone(), style));
+                cur_width += word_w;
+            }
+            first_word = false;
+        }
+        // flush remainder
+        if !cur_spans.is_empty() {
+            physical.push(Line::from(cur_spans));
+        } else {
+            // logical line produced no physical lines (e.g. all-spaces); emit a blank
+            physical.push(Line::raw(""));
+        }
+    }
+
+    (physical, map)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::style::Style;
+
+    #[test]
+    fn wrap_short_line_stays_one_line() {
+        let logical = vec![Line::raw("short")];
+        let (physical, map) = wrap_all(&logical, 80);
+        assert_eq!(physical.len(), 1);
+        assert_eq!(map, vec![0]);
+    }
+
+    #[test]
+    fn wrap_long_line_folds_to_width() {
+        let long = "word ".repeat(30); // 150 chars
+        let logical = vec![Line::raw(long)];
+        let (physical, _map) = wrap_all(&logical, 20);
+        assert!(physical.len() > 1, "should wrap into multiple lines");
+        // every physical line should be <= width (except possibly one long unbreakable word)
+        for line in &physical {
+            let w: usize = line.spans.iter().map(|s| unicode_width::UnicodeWidthStr::width(s.content.as_ref())).sum();
+            assert!(w <= 20 + 5, "line too wide: {} (w={})", w, w); // allow a bit over for long words
+        }
+    }
+
+    #[test]
+    fn wrap_map_points_to_first_physical_of_each_logical() {
+        let logical = vec![
+            Line::raw("first"),
+            Line::raw("second line that is long enough to wrap around the terminal width yes"),
+            Line::raw("third"),
+        ];
+        let (physical, map) = wrap_all(&logical, 25);
+        assert_eq!(map.len(), 3);
+        assert_eq!(map[0], 0);
+        assert_eq!(map[2], physical.len() - 1); // "third" is last, short → last physical
     }
 }
