@@ -51,6 +51,92 @@ final class DocRepositoryTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(repo.all().first).id, id1)
     }
 
+    func testPersistentContainerUsesDedicatedStoreAndPersists() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        do {
+            let container = try DocRepository.makePersistentContainer(
+                libraryDirectory: dir
+            )
+            let repo = DocRepository(
+                container: container,
+                docsDir: dir.appendingPathComponent("docs")
+            )
+            repo.cache(title: "Persistent", markdown: "# Body", sourceURI: nil)
+        }
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: dir.appendingPathComponent("library.store").path
+            )
+        )
+
+        let container = try DocRepository.makePersistentContainer(
+            libraryDirectory: dir
+        )
+        let repo = DocRepository(
+            container: container,
+            docsDir: dir.appendingPathComponent("docs")
+        )
+        XCTAssertEqual(repo.all().map(\.title), ["Persistent"])
+    }
+
+    func testInitRecoversOrphanedCachedFile() throws {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(
+            for: CachedDoc.self,
+            configurations: config
+        )
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let id = UUID()
+        DocStore.write(
+            docsDir: dir,
+            id: id,
+            markdown: "# Recovered title\n\nBody"
+        )
+
+        let repo = DocRepository(container: container, docsDir: dir)
+        let doc = try XCTUnwrap(repo.all().first)
+        XCTAssertEqual(doc.id, id)
+        XCTAssertEqual(doc.title, "Recovered title")
+        XCTAssertEqual(repo.loadContent(id: id), "# Recovered title\n\nBody")
+        XCTAssertEqual(repo.recoverOrphanedCacheFiles(), 0)
+    }
+
+    func testRecoveryUsesFallbackTitleWithoutHeading() throws {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try ModelContainer(
+            for: CachedDoc.self,
+            configurations: config
+        )
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let id = UUID()
+        DocStore.write(docsDir: dir, id: id, markdown: "Body")
+
+        let repo = DocRepository(container: container, docsDir: dir)
+        XCTAssertEqual(
+            try XCTUnwrap(repo.all().first).title,
+            "\(DocRepository.recoveredTitlePrefix) \(id.uuidString.prefix(8))"
+        )
+    }
+
+    func testRecoveryKeepsContentHashDeduplication() throws {
+        let (repo, dir) = try makeRepo()
+        repo.cache(title: "Existing", markdown: "# Same", sourceURI: nil)
+        DocStore.write(docsDir: dir, id: UUID(), markdown: "# Same")
+
+        XCTAssertEqual(repo.recoverOrphanedCacheFiles(), 0)
+        XCTAssertEqual(repo.all().count, 1)
+    }
+
     private func writeSource(_ name: String, _ body: String) throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

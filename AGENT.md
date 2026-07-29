@@ -22,6 +22,7 @@
 | 缓存正文 | App 内部存储文件（每条一份 `.md`） | 正文体积可变，不适合塞进 DB；文件按 id 命名 |
 | 内容去重 | 正文 SHA-256 作为唯一键 | 同一文件多次打开不重复占用空间 |
 | macOS 语言 | Swift | 原生体验最佳；WKWebView 是桌面最强 WebView，能零成本加载同一套 `shared/render` 资源，保住「WebView + 精修 CSS = 美观」的核心路线 |
+| macOS 缓存 | SwiftData 元数据固定落 `Application Support/MDreader/library.store`，正文落 `Application Support/MDreader/docs/<uuid>.md` | 禁止使用未限定归属的 SwiftData `default.store`，避免非沙盒 App 与其他应用撞库；启动时以正文缓存为兜底恢复缺失索引，保证已打开文档不会因元数据故障从「库」消失 |
 | macOS UI | SwiftUI | 声明式、与系统外观融合 |
 | macOS 工程 | Xcode + xcodegen（`project.yml` 声明式） | `.xcodeproj` 为生成物（gitignore）；project.yml 可 diff、可复现，贴合「命令行入口」准则 |
 | Linux 语言 | Rust | 类型安全、零成本抽象、单二进制分发；`cargo` 统一 build/test，符合「命令行入口」准则 |
@@ -154,7 +155,7 @@ Windows 端本地 macOS/Linux 无法 build（WinUI 3/WebView2 仅 Windows），�
 1. **MM1 脚手架**：xcodegen 工程、空 SwiftUI 窗口、`xcodegen generate && xcodebuild build` 出 `.app`。✅
 2. **MM2 渲染内核**：WKWebView 加载 `shared/render`，渲染内置样例 md，明暗主题。✅（Swift 版 SvgGuard / MermaidFenceNormalizer + XCTest 已对齐 Android 行为）
 3. **MM3 文件打开者**：Info.plist 注册 `.md` UTI，Finder「打开方式」、拖拽打开。✅（`CFBundleDocumentTypes` + `UTImportedTypeDeclarations` 声明 `com.mdreader.markdown`；`.onOpenURL` 处理 Finder/双击打开、`.onDrop` 处理拖拽；`ReaderModel` 文件读取有单测）
-4. **MM4 缓存层**：SwiftData/CoreData 元数据 + App Support 正文 + SHA-256 去重（对应 Android ContentHash/DocRepository）。✅（SwiftData `@Model CachedDoc` + `DocStore` + `DocRepository`；`deploymentTarget` 提到 macOS 14；打开/拖拽即缓存落盘）
+4. **MM4 缓存层**：SwiftData/CoreData 元数据 + App Support 正文 + SHA-256 去重（对应 Android ContentHash/DocRepository）。✅（SwiftData `@Model CachedDoc` + `DocStore` + `DocRepository`；元数据使用专属 `Application Support/MDreader/library.store`，禁止使用全局 `default.store`；启动时自动从 `docs/<uuid>.md` 恢复缺失索引；`deploymentTarget` 提到 macOS 14；打开/拖拽即缓存落盘）
 5. **MM5 内容管理**：Sidebar 列表（按日期分组）、搜索、详情、删除、收藏（对应 Android DateBuckets/Titles/Library）。✅（`NavigationSplitView` + `LibraryView`；`DateBuckets`/`Titles` Swift 移植；右键 contextMenu 删除/收藏；repository 返回值类型 `DocInfo` 避免 SwiftData fault）
 6. **MM6 图标与发布**：应用图标、名称、Release `.app` / DMG。
 7. **MM7 源文件变更追踪（auto-reload）**：当前打开的 `.md` 被外部编辑器修改后自动重载渲染。✅（`SourceFileWatcher` 封装 `DispatchSource`，**per-window** 监听 `ReaderModel.currentSourceURL`；复用幂等的 `DocRepository.refreshFromSource(id:)`——hash 比对，未变不刷新；`.write`/`.extend` 经 0.25s debounce 触发一次 reload，`.delete`/`.rename`（原子保存/删除）尝试 reopen 同 path 重建 source，文件永久消失则自我 cancel；回调在私有 serial queue，`@Published` 写一律切回主线程。`ReaderModel` 新增 `currentDocID`（统一覆盖 file/drag-drop/library 三入口，原 `selectedDocID` 仅库内高亮用）；reload 走轻量路径——直接更新 `markdown`+`resetOutline`+`refreshDocs`，**不**走 `openCached` 以保住 scroll/zoom/outline。Linux/Android/Windows 暂不做，保持各自现状。）

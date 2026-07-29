@@ -12,7 +12,7 @@ struct MDreaderApp: App {
     init() {
         let container: ModelContainer
         do {
-            container = try ModelContainer(for: CachedDoc.self)
+            container = try DocRepository.makePersistentContainer()
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }
